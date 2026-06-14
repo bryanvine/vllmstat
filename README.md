@@ -91,13 +91,27 @@ vllmstat --once --json
 - **Cache & KV memory** — prefix-cache hit rate (windowed and lifetime), token-source breakdown (compute vs. cache-hit vs. external KV transfer), KV-cache utilisation percentage, KV-cache capacity in tokens, and — when a quantised KV dtype is detected — the dtype (`fp8_e4m3`, `turboquant_k3v4_nc`, …), effective compression ratio vs. fp16, and how much fp16 memory the model's full context would require. For example, a `turboquant k3v4` cache shows ~4.6× compression and a note that the full context would need 25.8 GB in fp16.
 - **Latency percentiles** — TTFT, TPOT, end-to-end, and queue-wait time, each at p50 / p90 / p99, computed over a rolling window so recent spikes are visible immediately.
 - **Speculative decoding** — acceptance rate, accepted tokens per draft, per-position acceptance (when the server reports it). The panel is hidden when spec-decode is not active.
-- **Per-GPU stats** — utilisation %, VRAM used / total, temperature, power draw vs. limit, SM clock, memory clock. Multi-GPU servers show each GPU in a column.
+- **Per-GPU stats** — utilisation %, VRAM used / total, temperature, power draw vs. limit, clocks, fan. Works on NVIDIA, AMD, and Intel GPUs (see [GPU support](#gpu-support) for what each vendor reports). Multi-GPU and mixed-vendor hosts show every GPU.
+
+---
+
+## GPU support
+
+`vllmstat` detects each GPU's vendor from its DRM device and reads stats from the best source available. Every field degrades to `—` when its source is unavailable, and a missing driver, tool, or sysfs file never crashes the dashboard — it just shows less.
+
+| Vendor | What works | Prerequisite |
+|--------|-----------|--------------|
+| **NVIDIA** | Full: util %, VRAM used/total, temperature, power draw/limit, SM & memory clocks, fan %. | NVIDIA driver. The bundled `nvidia-ml-py` uses NVML; `nvidia-smi` on `PATH` is used as a fallback. |
+| **AMD** | Full: util %, VRAM used/total, temperature, power draw/limit, fan RPM, clock — via the `amdgpu` kernel driver's sysfs. | `amdgpu` kernel driver (in-tree on modern Linux). Install ROCm's `amd-smi` (or `rocm-smi`) for richer data; it's used automatically when on `PATH`. |
+| **Intel** | Temperature, power draw/limit, clock, and fan RPM out of the box via the `xe`/`i915` sysfs. **util % and VRAM are best-effort and usually unavailable** on the `xe` driver. | `xe` or `i915` kernel driver. No extra tools needed for temp/power/clock/fan. |
+
+**Intel limitation (known):** the `xe` driver exposes no `gpu_busy_percent` and no `mem_info_vram_*`, so utilisation and VRAM cannot be read from sysfs. `vllmstat` makes a best-effort attempt to derive util % from per-process `drm-cycles` in `/proc/*/fdinfo` (which typically requires root and is unsupported on `xe`), and otherwise shows `—` with a `(util/VRAM: see prereqs)` hint. `intel_gpu_top` only supports `i915`, so it is not used for `xe`. Full Intel util/VRAM via Level-Zero / `xpu-smi` is planned for a future release. Intel power is derived from the `energy1_input` counter, so it appears one refresh after the panel opens.
 
 ---
 
 ## Remote and containerised setups
 
-`vllmstat` does not need to run on the GPU machine. If NVML and `nvidia-smi` are not reachable from the machine you run it on — for example, when monitoring a remote server or when vLLM is isolated in its own GPU container — the GPU panel shows "unavailable" and all the vLLM telemetry panels (concurrency, throughput, cache, latency, spec-decode) continue to work normally. Pass `--no-gpu` to suppress the panel entirely.
+`vllmstat` does not need to run on the GPU machine. If no GPU is reachable from the machine you run it on — no NVML/`nvidia-smi`, no `amdgpu`/`xe` sysfs — for example when monitoring a remote server or when vLLM is isolated in its own GPU container, the GPU panel shows "unavailable" and all the vLLM telemetry panels (concurrency, throughput, cache, latency, spec-decode) continue to work normally. Pass `--no-gpu` to suppress the panel entirely.
 
 ---
 
@@ -105,7 +119,7 @@ vllmstat --once --json
 
 - Python ≥ 3.10
 - A running vLLM server that exposes its Prometheus `/metrics` endpoint (all vLLM ≥ 0.4 deployments do this by default)
-- NVML / `nvidia-smi` — **optional**, only needed for the GPU panel
+- A GPU driver — **optional**, only needed for the GPU panel. NVIDIA (NVML/`nvidia-smi`), AMD (`amdgpu`), or Intel (`xe`/`i915`); see [GPU support](#gpu-support).
 
 ---
 
