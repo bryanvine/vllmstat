@@ -13,7 +13,8 @@ _MIN_PLOT_WIDTH = 8
 def _plot_width(width: int | None) -> int:
     if not width or width <= 0:
         return _DEFAULT_PLOT_WIDTH
-    return max(_MIN_PLOT_WIDTH, int(width))
+    # Leave a small right margin so braille cells never touch the panel border.
+    return max(_MIN_PLOT_WIDTH, int(width) - 2)
 
 
 def header(s: Snapshot, *, url: str, interval: float, uptime: str) -> str:
@@ -52,7 +53,8 @@ def throughput(s: Snapshot, h: History, *, width: int | None = None) -> str:
 
 
 def cache_kv(s: Snapshot, h: History) -> str:
-    hit_spark = sparkline(list(h.series("prefix_hit").values))
+    # Cap the inline sparkline so the line never grows long enough to wrap.
+    hit_spark = sparkline(list(h.series("prefix_hit").values)[-16:])
     src = (
         f"compute {fmt_pct(s.src_compute)} · "
         f"cache-hit {fmt_pct(s.src_cache_hit)} · ext {fmt_pct(s.src_external)}"
