@@ -34,7 +34,7 @@ class FlakyVllm:
 async def test_disconnect_marks_not_connected_but_keeps_running():
     cfg = Config(mock=False, interval=0.05, gpu=False)
     app = VllmTopApp(cfg)
-    app._vllm = FlakyVllm()
+    app._vllm = FlakyVllm()  # type: ignore[assignment]
     app._mock = None
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
