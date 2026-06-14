@@ -8,7 +8,7 @@ from collections.abc import Callable
 from vllmstat.core.state import GpuSample, GpuSnapshot
 from vllmstat.providers.gpu_amd import parse_amd_smi_json, read_amd_sysfs
 from vllmstat.providers.gpu_fdinfo import read_fdinfo
-from vllmstat.providers.gpu_intel import pdev_for_card, read_intel_sysfs
+from vllmstat.providers.gpu_intel import pdev_for_card, read_gtidle_util, read_intel_sysfs
 from vllmstat.providers.gpu_sysfs import Card, detect_cards
 
 _SMI_QUERY = (
@@ -128,6 +128,9 @@ class GpuProvider:
         # Per-card Intel fdinfo cycle carry for util deltas: card index -> eng->cycles.
         self._intel_fdinfo_busy: dict[int, dict[str, int]] = {}
         self._intel_fdinfo_total: dict[int, dict[str, int]] = {}
+        # Per-card Intel gtidle carry for non-root util: idle-residency ms + time.
+        self._intel_idle: dict[int, dict[str, int]] = {}
+        self._intel_idle_t: dict[int, float] = {}
 
     # -- vendor backends -------------------------------------------------
 
@@ -191,7 +194,21 @@ class GpuProvider:
             if new_energy is not None:
                 self._intel_energy[c.index] = new_energy
 
-            # Real util%/VRAM via DRM fdinfo (sysfs exposes neither on xe).
+            # Utilisation from the GT idle-residency counter — world-readable as
+            # non-root, so this is the primary util source on xe/i915.
+            gt_util, new_idle, idle_t = read_gtidle_util(
+                c.path,
+                prev_idle=self._intel_idle.get(c.index),
+                now=now,
+                prev_now=self._intel_idle_t.get(c.index),
+            )
+            self._intel_idle[c.index] = new_idle
+            self._intel_idle_t[c.index] = idle_t
+            g.util_gpu = gt_util
+
+            # VRAM (and a util fallback) via DRM fdinfo. VRAM is root-gated when
+            # the GPU process runs as a different user; util here is only a
+            # fallback for when gtidle is unreadable.
             pdev = self._pdev_resolver(c.path)
             if pdev:
                 stats, busy, total = read_fdinfo(
@@ -201,7 +218,8 @@ class GpuProvider:
                     prev_total=self._intel_fdinfo_total.get(c.index),
                     now=now,
                 )
-                g.util_gpu = stats.util_pct
+                if g.util_gpu is None:
+                    g.util_gpu = stats.util_pct
                 g.mem_used = stats.vram_used_bytes
                 # mem_total stays None: total VRAM capacity isn't reliably
                 # available on xe yet.

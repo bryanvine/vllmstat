@@ -193,6 +193,86 @@ def test_provider_intel_no_fdinfo_leaves_util_vram_none(tmp_path):  # noqa: ANN0
     assert g.fan_rpm == 1060
 
 
+def _add_gtidle(drm, idle_ms, *, gt="tile0/gt0"):  # noqa: ANN001
+    """Add a gtidle idle-residency counter under card0 in the fake DRM tree."""
+    from pathlib import Path
+
+    p = drm / "card0" / "device" / Path(gt) / "gtidle"
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "idle_residency_ms").write_text(f"{idle_ms}\n")
+
+
+def test_provider_intel_util_from_gtidle_no_root(tmp_path):  # noqa: ANN001
+    # gtidle gives util without root (no fdinfo clients present at all).
+    drm = _intel_card(tmp_path / "sys")
+    _add_gtidle(drm, 5000)
+    proc = tmp_path / "proc"
+    proc.mkdir()
+    times = iter([100.0, 101.0])
+    p = GpuProvider(
+        enabled=True,
+        drm_root=str(drm),
+        clock=lambda: next(times),
+        proc_root=str(proc),
+        pdev_resolver=lambda _card_path: "0000:06:00.0",
+    )
+    g1 = p.sample().gpus[0]
+    assert g1.util_gpu is None  # first sample -> no idle delta yet
+    assert g1.mem_used is None  # no fdinfo clients
+
+    # idle advances 300ms over a 1000ms wall window -> 70% busy, no root needed.
+    _add_gtidle(drm, 5300)
+    g2 = p.sample().gpus[0]
+    assert g2.util_gpu == 70.0
+    assert g2.mem_used is None  # VRAM still root-gated / absent
+
+
+def test_provider_intel_gtidle_is_primary_over_fdinfo(tmp_path):  # noqa: ANN001
+    # When both gtidle and fdinfo report util, gtidle (non-root) wins; VRAM
+    # still comes from fdinfo.
+    drm = _intel_card(tmp_path / "sys")
+    _add_gtidle(drm, 5000)
+    proc = tmp_path / "proc"
+    pdev = "0000:06:00.0"
+    _fdinfo_client(proc, 100, 3, pdev=pdev, cid=1, ccs=100, total=1000, vram=20_000_000)
+    times = iter([100.0, 101.0])
+    p = GpuProvider(
+        enabled=True,
+        drm_root=str(drm),
+        clock=lambda: next(times),
+        proc_root=str(proc),
+        pdev_resolver=lambda _card_path: pdev,
+    )
+    p.sample()  # prime both gtidle and fdinfo carries
+    # gtidle: +300ms idle / 1000ms -> 70% busy. fdinfo: ccs +500 / total +1000 -> 50%.
+    _add_gtidle(drm, 5300)
+    _fdinfo_client(proc, 100, 3, pdev=pdev, cid=1, ccs=600, total=2000, vram=20_000_000)
+    g = p.sample().gpus[0]
+    assert g.util_gpu == 70.0  # gtidle (non-root) is primary
+    assert g.mem_used == 20_000_000 * 1024  # VRAM from fdinfo
+
+
+def test_provider_intel_fdinfo_util_fallback_when_gtidle_none(tmp_path):  # noqa: ANN001
+    # No gtidle counters -> util falls back to fdinfo.
+    drm = _intel_card(tmp_path / "sys")  # no gtidle tree added
+    proc = tmp_path / "proc"
+    pdev = "0000:06:00.0"
+    _fdinfo_client(proc, 100, 3, pdev=pdev, cid=1, ccs=100, total=1000, vram=20_000_000)
+    times = iter([100.0, 101.0])
+    p = GpuProvider(
+        enabled=True,
+        drm_root=str(drm),
+        clock=lambda: next(times),
+        proc_root=str(proc),
+        pdev_resolver=lambda _card_path: pdev,
+    )
+    p.sample()
+    _fdinfo_client(proc, 100, 3, pdev=pdev, cid=1, ccs=600, total=2000, vram=20_000_000)
+    g = p.sample().gpus[0]
+    assert g.util_gpu == 50.0  # fdinfo fallback (gtidle unavailable)
+    assert g.mem_used == 20_000_000 * 1024
+
+
 def test_provider_no_cards_no_nvml_reports_unavailable(tmp_path):  # noqa: ANN001
     empty = tmp_path / "drm"
     empty.mkdir()

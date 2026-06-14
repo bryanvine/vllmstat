@@ -1,11 +1,14 @@
 """Intel GPU backend for the ``xe`` (and ``i915``) drivers via sysfs.
 
 The ``xe`` driver exposes no ``gpu_busy_percent`` and no ``mem_info_vram_*`` in
-sysfs, so util% and VRAM come from the DRM ``fdinfo`` aggregator (see
-``gpu_fdinfo``) rather than from here. What this module reads out of the box:
-GPU clock, package temperature, fan RPM, power cap, and a power figure derived
-from the ``energy1_input`` counter delta. It also resolves a card's PCI address
-(``pdev``) so the fdinfo aggregator can be pointed at the right device.
+sysfs. Utilisation, however, *can* be derived without root from the per-GT
+idle-residency counter (``read_gtidle_util``); only VRAM still requires the DRM
+``fdinfo`` aggregator (see ``gpu_fdinfo``), which is root-gated when the GPU
+process runs as a different user. What this module reads out of the box, all
+world-readable as non-root: GPU clock, package temperature, fan RPM, power cap,
+a power figure derived from the ``energy1_input`` counter delta, and GPU
+utilisation from ``gtidle/idle_residency_ms``. It also resolves a card's PCI
+address (``pdev``) so the fdinfo aggregator can be pointed at the right device.
 
 Every read catches OS errors and degrades to ``None``; nothing here ever raises.
 """
@@ -99,6 +102,59 @@ def read_intel_sysfs(
         ),
         new_energy,
     )
+
+
+def read_gtidle_util(
+    card_path: str,
+    prev_idle: dict[str, int] | None,
+    now: float,
+    prev_now: float | None,
+) -> tuple[float | None, dict[str, int], float]:
+    """Compute GPU utilisation from the per-GT idle-residency counter (no root).
+
+    The ``xe`` driver exposes a cumulative GT-idle counter in milliseconds at
+    ``<card>/device/tile*/gt*/gtidle/idle_residency_ms``, world-readable as
+    non-root. Over a wall-clock window, the busy fraction of a GT is
+    ``1 - Δidle_ms / Δwall_ms``; util% is ``100 * busy`` clamped to ``[0, 100]``.
+    A card may expose several GTs (e.g. a render/compute ``gt0`` and a media
+    ``gt1``); we take the **busiest** GT (max util) as the GPU utilisation.
+
+    ``prev_idle`` maps each idle-counter path to its previous reading (or
+    ``None`` on the first call) and ``prev_now`` is the matching timestamp.
+    Returns ``(util_or_none, new_idle, now)``: ``util`` is ``None`` when there is
+    no previous sample, no GT counter is readable, or the wall delta is not
+    positive. The caller carries ``new_idle`` and ``now`` forward as the next
+    call's ``prev_idle``/``prev_now``. Never raises.
+    """
+    pattern = os.path.join(card_path, "device", "tile*", "gt*", "gtidle", "idle_residency_ms")
+    try:
+        paths = sorted(glob.glob(pattern))
+    except OSError:
+        paths = []
+
+    new_idle: dict[str, int] = {}
+    best: float | None = None
+    have_prev = prev_idle is not None and prev_now is not None
+    dwall_ms = (now - prev_now) * 1000.0 if prev_now is not None else 0.0
+
+    for path in paths:
+        idle = read_int(path)
+        if idle is None:
+            continue
+        new_idle[path] = idle
+        if not have_prev or dwall_ms <= 0:
+            continue
+        assert prev_idle is not None  # narrowed by have_prev
+        prev = prev_idle.get(path)
+        if prev is None:
+            continue
+        didle = idle - prev
+        util_gt = 100.0 * (1.0 - didle / dwall_ms)
+        util_gt = max(0.0, min(100.0, util_gt))
+        if best is None or util_gt > best:
+            best = util_gt
+
+    return best, new_idle, now
 
 
 def pdev_for_card(card_path: str) -> str | None:

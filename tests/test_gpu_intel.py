@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vllmstat.providers.gpu_intel import pdev_for_card, read_intel_sysfs
+from vllmstat.providers.gpu_intel import (
+    pdev_for_card,
+    read_gtidle_util,
+    read_intel_sysfs,
+)
 
 
 def _make_intel_card(
@@ -109,3 +113,89 @@ def test_pdev_for_card_missing_device_returns_none_or_str(tmp_path: Path):
     card.mkdir()
     # realpath of a non-existent path yields its basename ("device"); never raises.
     assert pdev_for_card(str(card)) in ("device", None)
+
+
+def _make_gtidle_card(tmp_path: Path, gts: dict[str, int]) -> Path:
+    """Build a fake card tree with ``device/<gt>/gtidle/idle_residency_ms``.
+
+    ``gts`` maps a relative GT subpath (e.g. ``"tile0/gt0"``) to its initial
+    cumulative idle-residency in ms.
+    """
+    card = tmp_path / "card0"
+    for rel, idle_ms in gts.items():
+        gtidle = card / "device" / Path(rel) / "gtidle"
+        gtidle.mkdir(parents=True)
+        (gtidle / "idle_residency_ms").write_text(f"{idle_ms}\n")
+    return card
+
+
+def _set_gtidle(card: Path, rel: str, idle_ms: int) -> None:
+    (card / "device" / rel / "gtidle" / "idle_residency_ms").write_text(f"{idle_ms}\n")
+
+
+def test_read_gtidle_util_none_on_first_call(tmp_path: Path):
+    # No previous sample -> util is None, but the idle dict is captured.
+    card = _make_gtidle_card(tmp_path, {"tile0/gt0": 5000})
+    util, new_idle, t = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    assert util is None
+    assert t == 100.0
+    # the gt path was recorded so the next call has a baseline
+    assert len(new_idle) == 1
+    assert next(iter(new_idle.values())) == 5000
+
+
+def test_read_gtidle_util_partial_idle_gives_load(tmp_path: Path):
+    # idle advanced 300ms over a 1000ms wall window -> 70% busy.
+    card = _make_gtidle_card(tmp_path, {"tile0/gt0": 5000})
+    _, idle1, t1 = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    _set_gtidle(card, "tile0/gt0", 5300)
+    util, _, t2 = read_gtidle_util(str(card), prev_idle=idle1, now=101.0, prev_now=t1)
+    assert util == 70.0
+    assert t2 == 101.0
+
+
+def test_read_gtidle_util_fully_idle_gives_zero(tmp_path: Path):
+    # idle advances by >= wall -> clamped to 0% busy.
+    card = _make_gtidle_card(tmp_path, {"tile0/gt0": 5000})
+    _, idle1, t1 = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    _set_gtidle(card, "tile0/gt0", 6200)  # +1200ms idle over a 1000ms wall window
+    util, _, _ = read_gtidle_util(str(card), prev_idle=idle1, now=101.0, prev_now=t1)
+    assert util == 0.0
+
+
+def test_read_gtidle_util_no_idle_progress_gives_full(tmp_path: Path):
+    # idle unchanged across the window -> 100% busy.
+    card = _make_gtidle_card(tmp_path, {"tile0/gt0": 5000})
+    _, idle1, t1 = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    _set_gtidle(card, "tile0/gt0", 5000)  # no change
+    util, _, _ = read_gtidle_util(str(card), prev_idle=idle1, now=101.0, prev_now=t1)
+    assert util == 100.0
+
+
+def test_read_gtidle_util_multi_gt_takes_busiest(tmp_path: Path):
+    # gt0 fully idle (0% busy), gt1 30% idle (70% busy) -> max wins -> 70.0.
+    card = _make_gtidle_card(tmp_path, {"tile0/gt0": 5000, "tile0/gt1": 8000})
+    _, idle1, t1 = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    _set_gtidle(card, "tile0/gt0", 6000)  # +1000ms idle / 1000ms wall -> 0% busy
+    _set_gtidle(card, "tile0/gt1", 8300)  # +300ms idle / 1000ms wall -> 70% busy
+    util, _, _ = read_gtidle_util(str(card), prev_idle=idle1, now=101.0, prev_now=t1)
+    assert util == 70.0
+
+
+def test_read_gtidle_util_no_gt_paths_returns_none(tmp_path: Path):
+    # A card with no gtidle counters must not raise; util stays None.
+    card = tmp_path / "card0"
+    (card / "device").mkdir(parents=True)
+    util, new_idle, t = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    assert util is None
+    assert new_idle == {}
+    assert t == 100.0
+
+
+def test_read_gtidle_util_zero_wall_returns_none(tmp_path: Path):
+    # dwall == 0 must not divide-by-zero; util is None.
+    card = _make_gtidle_card(tmp_path, {"tile0/gt0": 5000})
+    _, idle1, t1 = read_gtidle_util(str(card), prev_idle=None, now=100.0, prev_now=None)
+    _set_gtidle(card, "tile0/gt0", 5000)
+    util, _, _ = read_gtidle_util(str(card), prev_idle=idle1, now=100.0, prev_now=t1)
+    assert util is None
