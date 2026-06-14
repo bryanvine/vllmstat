@@ -32,3 +32,20 @@ async def test_pause_binding_stops_updates():
         await pilot.pause(0.2)
         assert app.paused is True
         assert app.snapshot is snap_a  # unchanged while paused
+
+
+@pytest.mark.asyncio
+async def test_app_boots_with_session_panel_and_reset_key():
+    cfg = Config(mock=True, interval=0.05, gpu=False)
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        from vllmstat.widgets import Panel
+
+        panels = app.query(Panel)
+        text = " ".join(str(p.renderable) for p in panels)
+        assert "SESSION" in text
+        # pressing "r" resets the session without crashing
+        await pilot.press("r")
+        await pilot.pause(0.15)
+        assert app.snapshot is not None

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from vllmstat.core.history import History
 from vllmstat.core.state import Snapshot
-from vllmstat.format import fmt_bytes, fmt_dur, fmt_pct, fmt_si, sparkline
+from vllmstat.format import fmt_bytes, fmt_dur, fmt_dur_hms, fmt_pct, fmt_si, sparkline
 from vllmstat.plot import braille_plot
 
 # Default plot width when the panel width is unknown (e.g. first render).
@@ -75,6 +75,18 @@ def cache_kv(s: Snapshot, h: History) -> str:
         f"life {fmt_pct(s.prefix_hit_lifetime)}   sources {src}\n"
         f" memory KV usage {fmt_pct(s.kv_usage)} ({used}/{cap} tok)   "
         f"{s.kv_dtype or '—'}{ratio}{ctx}"
+    )
+
+
+def session(s: Snapshot) -> str:
+    return (
+        f"SESSION (while serving)\n"
+        f" decode avg {fmt_si(s.avg_decode_tps)} tok/s · "
+        f"prefill/pp avg {fmt_si(s.avg_prefill_tps)} tok/s · "
+        f"active {fmt_pct(s.session_active_frac)} "
+        f"({fmt_dur_hms(s.session_active_s)} busy / {fmt_dur_hms(s.session_idle_s)} idle)\n"
+        f" {s.session_requests} reqs · {fmt_si(s.avg_gen_tokens_per_req)} gen tok/req · "
+        f"totals {fmt_si(s.session_gen_tokens)} gen · {fmt_si(s.session_prompt_tokens)} prompt"
     )
 
 

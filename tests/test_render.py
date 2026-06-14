@@ -116,6 +116,49 @@ def test_specdecode_hidden_when_inactive():
     assert render.specdecode(_snap(spec_active=False)) == ""
 
 
+def test_session_panel_shows_decode_prefill_active():
+    s = _snap(
+        avg_decode_tps=142.0,
+        avg_prefill_tps=318.0,
+        session_active_frac=0.8,
+        session_active_s=723.0,  # 12m03s
+        session_idle_s=42.0,
+        session_requests=128,
+        session_gen_tokens=48000.0,
+        session_prompt_tokens=96000.0,
+        avg_gen_tokens_per_req=375.0,
+    )
+    text = render.session(s)
+    assert "SESSION" in text
+    assert "142" in text  # decode avg
+    assert "318" in text  # prefill/pp avg
+    assert "prefill" in text.lower() and "pp" in text.lower()
+    assert "80.0%" in text  # active fraction
+    assert "12m03s" in text  # busy duration
+    assert "42s" in text  # idle duration
+    assert "128 reqs" in text
+    assert "375" in text  # gen tok/req
+    assert "48.0k" in text  # session gen totals (fmt_si)
+
+
+def test_session_panel_none_safe_em_dash():
+    # Fresh session: no averages yet -> em dashes, never raises.
+    s = _snap(
+        avg_decode_tps=None,
+        avg_prefill_tps=None,
+        session_active_frac=None,
+        session_active_s=0.0,
+        session_idle_s=0.0,
+        session_requests=0,
+        session_gen_tokens=0.0,
+        session_prompt_tokens=0.0,
+        avg_gen_tokens_per_req=None,
+    )
+    text = render.session(s)  # must NOT raise
+    assert "SESSION" in text
+    assert "—" in text
+
+
 def test_gpu_panel_handles_all_none_optional_fields():
     from vllmstat.core.state import GpuSample, GpuSnapshot
 

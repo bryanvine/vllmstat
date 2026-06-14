@@ -31,6 +31,7 @@ class VllmStatApp(App):
         ("q", "quit", "Quit"),
         ("p", "toggle_pause", "Pause"),
         ("g", "toggle_gpu", "GPU"),
+        ("r", "reset_session", "Reset"),
         ("plus,equals_sign", "faster", "Faster"),
         ("minus", "slower", "Slower"),
     ]
@@ -62,6 +63,7 @@ class VllmStatApp(App):
         self.p_tput = Panel(id="tput")
         self.p_lat = Panel(id="lat")
         self.p_cache = Panel(id="cache")
+        self.p_session = Panel(id="session")
         self.p_eff = Panel(id="eff")
         self.p_spec = Panel(id="spec")
         self.p_gpu = Panel(id="gpu")
@@ -71,6 +73,7 @@ class VllmStatApp(App):
             yield self.p_tput
             yield self.p_lat
         yield self.p_cache
+        yield self.p_session
         yield self.p_eff
         yield self.p_spec
         yield self.p_gpu
@@ -161,6 +164,7 @@ class VllmStatApp(App):
         )
         self.p_lat.update(render.latency(s))
         self.p_cache.update(render.cache_kv(s, self._history))
+        self.p_session.update(render.session(s))
         eff = render.efficiency(s)
         self.p_eff.display = bool(eff)
         self.p_eff.update(eff)
@@ -174,6 +178,9 @@ class VllmStatApp(App):
 
     def action_toggle_gpu(self) -> None:
         self._gpu.enabled = not self._gpu.enabled
+
+    def action_reset_session(self) -> None:
+        self._engine.reset_session()
 
     def action_faster(self) -> None:
         self.cfg.interval = max(0.1, self.cfg.interval / 2)
