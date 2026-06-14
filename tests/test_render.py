@@ -143,8 +143,41 @@ def test_gpu_panel_intel_style_sample_shows_name_temp_and_hint():
     assert "2800" in text  # clock shown
     assert "1060" in text and "rpm" in text.lower()  # fan as RPM
     assert "—" in text  # util / VRAM shown as em dash
-    # both util and VRAM missing -> a per-field hint is appended
-    assert "prereq" in text.lower()
+    # both util and VRAM missing (no root) -> the root hint is appended
+    assert "need root" in text.lower()
+    assert "readme" in text.lower()
+
+
+def test_gpu_panel_intel_with_fdinfo_util_vram_no_hint():
+    # Intel sample with real fdinfo util/VRAM but unknown total -> no hint,
+    # VRAM rendered as "<used>/—" (None-safe total).
+    s = _snap(
+        gpu=GpuSnapshot(
+            available=True,
+            source="intel-sysfs",
+            gpus=[
+                GpuSample(
+                    index=0,
+                    name="Intel Arc B-series (Battlemage)",
+                    vendor="intel",
+                    util_gpu=37.0,
+                    mem_used=31_645_832 * 1024,
+                    mem_total=None,
+                    temp_c=57.0,
+                    power_w=116.0,
+                    power_limit_w=275.0,
+                    fan_rpm=1060,
+                    clock_sm_mhz=2800,
+                )
+            ],
+        )
+    )
+    text = render.gpu(s)
+    assert "37" in text  # util% shown
+    assert "32.4 GB" in text  # VRAM used shown (31_645_832 KiB ~= 32.4 GB)
+    assert "need root" not in text.lower()  # util/VRAM present -> no hint
+    # total unknown -> shown as em dash on the right of the slash
+    assert "32.4 GB/—" in text
 
 
 def test_gpu_panel_amd_rpm_fan_and_no_hint_when_util_present():

@@ -103,7 +103,6 @@ def gpu(s: Snapshot) -> str:
         return f"GPU  unavailable ({s.gpu.error or 'no NVML/nvidia-smi'})"
     lines = []
     for g in s.gpu.gpus:
-        has_mem = g.mem_used is not None and g.mem_total is not None
         mem_pct = (g.mem_used / g.mem_total) if (g.mem_used is not None and g.mem_total) else None
         util = f"{g.util_gpu:.0f}%" if g.util_gpu is not None else "—"
         temp = f"{g.temp_c:.0f}°C" if g.temp_c is not None else "—"
@@ -123,7 +122,7 @@ def gpu(s: Snapshot) -> str:
             sm = g.clock_sm_mhz if g.clock_sm_mhz is not None else "—"
             mem = g.clock_mem_mhz if g.clock_mem_mhz is not None else "—"
             parts.append(f"  clk {sm}/{mem} MHz")
-        if g.util_gpu is None and not has_mem:
-            parts.append("  (util/VRAM: see prereqs)")
+        if g.util_gpu is None and g.mem_used is None:
+            parts.append("  (util/VRAM need root — see README)")
         lines.append("".join(parts))
     return "\n".join(lines)
