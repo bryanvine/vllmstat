@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
+from collections.abc import Callable
 
 from vllmstat.core.state import GpuSample, GpuSnapshot
+from vllmstat.providers.gpu_amd import parse_amd_smi_json, read_amd_sysfs
+from vllmstat.providers.gpu_intel import intel_util_via_fdinfo, read_intel_sysfs
+from vllmstat.providers.gpu_sysfs import Card, detect_cards
 
 _SMI_QUERY = (
     "index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,"
@@ -90,16 +95,36 @@ def parse_nvidia_smi_csv(text: str) -> list[GpuSample]:
     return gpus
 
 
+def _run_cli(cmd: list[str], timeout: float = 3.0) -> str | None:
+    """Run a CLI, returning stdout or ``None`` on any failure (never raises)."""
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=True
+        ).stdout
+    except Exception:  # noqa: BLE001 - tool missing/failed; degrade gracefully
+        return None
+
+
 class GpuProvider:
-    def __init__(self, *, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        drm_root: str | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.enabled = enabled
+        self._drm_root = drm_root
+        self._clock = clock
         self._mode: str | None = None
         self._nvml: object | None = None
+        # Per-card Intel energy carry: card index -> (energy_uj, time).
+        self._intel_energy: dict[int, tuple[int, float]] = {}
 
-    def sample(self) -> GpuSnapshot:
-        if not self.enabled:
-            return GpuSnapshot(available=False, source="none", error="disabled")
-        # try NVML
+    # -- vendor backends -------------------------------------------------
+
+    def _read_nvidia(self) -> tuple[list[GpuSample], str] | None:
+        """Read all NVIDIA GPUs via NVML, falling back to nvidia-smi."""
         if self._mode in (None, "nvml"):
             try:
                 if self._nvml is None:
@@ -109,24 +134,99 @@ class GpuProvider:
                 assert self._nvml is not None
                 snap = read_nvml(self._nvml)
                 self._mode = "nvml"
-                return snap
+                for g in snap.gpus:
+                    g.vendor = "nvidia"
+                return snap.gpus, "nvml"
             except Exception:  # noqa: BLE001 - fall back to nvidia-smi
                 self._nvml = None
-        # try nvidia-smi
         smi = shutil.which("nvidia-smi")
         if smi:
-            try:
-                out = subprocess.run(
-                    [smi, f"--query-gpu={_SMI_QUERY}", "--format=csv,noheader,nounits"],
-                    capture_output=True,
-                    text=True,
-                    timeout=3,
-                    check=True,
-                ).stdout
+            out = _run_cli([smi, f"--query-gpu={_SMI_QUERY}", "--format=csv,noheader,nounits"])
+            if out is not None:
                 self._mode = "nvidia-smi"
-                return GpuSnapshot(
-                    available=True, source="nvidia-smi", gpus=parse_nvidia_smi_csv(out)
-                )
-            except Exception:  # noqa: BLE001
-                pass
-        return GpuSnapshot(available=False, source="none", error="no NVML or nvidia-smi")
+                gpus = parse_nvidia_smi_csv(out)
+                for g in gpus:
+                    g.vendor = "nvidia"
+                return gpus, "nvidia-smi"
+        return None
+
+    def _read_amd(self, cards: list[Card]) -> tuple[list[GpuSample], str]:
+        for tool in ("amd-smi", "rocm-smi"):
+            exe = shutil.which(tool)
+            if not exe:
+                continue
+            args = (
+                [exe, "metric", "--json"]
+                if tool == "amd-smi"
+                else [exe, "--showuse", "--showmemuse", "--showtemp", "--showpower", "--json"]
+            )
+            out = _run_cli(args)
+            if out is not None:
+                gpus = parse_amd_smi_json(out)
+                if gpus:
+                    return gpus, tool
+        # sysfs fallback, one sample per detected AMD card
+        gpus = []
+        for c in cards:
+            g = read_amd_sysfs(c.path)
+            g.index = c.index
+            gpus.append(g)
+        return gpus, "amdgpu-sysfs"
+
+    def _read_intel(self, cards: list[Card]) -> tuple[list[GpuSample], str]:
+        now = self._clock()
+        gpus: list[GpuSample] = []
+        for c in cards:
+            prev = self._intel_energy.get(c.index)
+            g, new_energy = read_intel_sysfs(c.path, prev, now)
+            g.index = c.index
+            if new_energy is not None:
+                self._intel_energy[c.index] = new_energy
+            util = intel_util_via_fdinfo(card_minor=128 + c.index)
+            if util is not None:
+                g.util_gpu = util
+            gpus.append(g)
+        return gpus, "intel-sysfs"
+
+    # -- public API ------------------------------------------------------
+
+    def sample(self) -> GpuSnapshot:
+        if not self.enabled:
+            return GpuSnapshot(available=False, source="none", error="disabled")
+
+        root = self._drm_root if self._drm_root is not None else "/sys/class/drm"
+        cards = detect_cards(root)
+        gpus: list[GpuSample] = []
+        sources: list[str] = []
+
+        nvidia_cards = [c for c in cards if c.vendor == "nvidia"]
+        amd_cards = [c for c in cards if c.vendor == "amd"]
+        intel_cards = [c for c in cards if c.vendor == "intel"]
+
+        # NVIDIA: read via NVML/nvidia-smi when an NVIDIA card is present, or
+        # when detection found nothing at all (NVML works without DRM sysfs).
+        if nvidia_cards or not cards:
+            nv = self._read_nvidia()
+            if nv is not None:
+                gpus.extend(nv[0])
+                sources.append(nv[1])
+
+        if amd_cards:
+            amd_gpus, amd_src = self._read_amd(amd_cards)
+            gpus.extend(amd_gpus)
+            sources.append(amd_src)
+
+        if intel_cards:
+            intel_gpus, intel_src = self._read_intel(intel_cards)
+            gpus.extend(intel_gpus)
+            sources.append(intel_src)
+
+        if not gpus:
+            return GpuSnapshot(
+                available=False,
+                source="none",
+                error="no GPUs detected (no NVML/nvidia-smi, no amdgpu/xe sysfs)",
+            )
+
+        source = sources[0] if len(sources) == 1 else "+".join(sources)
+        return GpuSnapshot(available=True, source=source, gpus=gpus)
