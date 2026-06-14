@@ -112,3 +112,64 @@ def test_specdecode_handles_none_accepted_per_draft():
     s = _snap(spec_active=True, spec_acceptance=0.4, spec_accepted_per_draft=None)
     text = render.specdecode(s)  # must NOT raise
     assert "acceptance" in text
+
+
+def test_gpu_panel_intel_style_sample_shows_name_temp_and_hint():
+    s = _snap(
+        gpu=GpuSnapshot(
+            available=True,
+            source="intel-sysfs",
+            gpus=[
+                GpuSample(
+                    index=0,
+                    name="Intel Arc B-series (Battlemage)",
+                    vendor="intel",
+                    util_gpu=None,
+                    mem_used=None,
+                    mem_total=None,
+                    temp_c=57.0,
+                    power_w=116.0,
+                    power_limit_w=275.0,
+                    fan_rpm=1060,
+                    clock_sm_mhz=2800,
+                )
+            ],
+        )
+    )
+    text = render.gpu(s)  # must NOT raise
+    assert "Intel Arc B-series (Battlemage)" in text
+    assert "intel" in text.lower()
+    assert "57" in text  # temperature shown
+    assert "2800" in text  # clock shown
+    assert "1060" in text and "rpm" in text.lower()  # fan as RPM
+    assert "—" in text  # util / VRAM shown as em dash
+    # both util and VRAM missing -> a per-field hint is appended
+    assert "prereq" in text.lower()
+
+
+def test_gpu_panel_amd_rpm_fan_and_no_hint_when_util_present():
+    s = _snap(
+        gpu=GpuSnapshot(
+            available=True,
+            source="amdgpu-sysfs",
+            gpus=[
+                GpuSample(
+                    index=0,
+                    name="amd GPU 0x744c",
+                    vendor="amd",
+                    util_gpu=42.0,
+                    mem_used=8_000_000_000,
+                    mem_total=17_000_000_000,
+                    temp_c=48.0,
+                    power_w=123.0,
+                    power_limit_w=250.0,
+                    fan_rpm=1800,
+                    clock_sm_mhz=2100,
+                )
+            ],
+        )
+    )
+    text = render.gpu(s)
+    assert "1800" in text and "RPM" in text
+    assert "42" in text
+    assert "prereq" not in text.lower()  # util+VRAM present -> no hint
