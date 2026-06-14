@@ -23,7 +23,9 @@ from vllmtop.widgets import Panel
 class VllmTopApp(App):
     CSS = """
     Panel { border: round $primary; padding: 0 1; height: auto; }
-    #row1 { height: auto; } #gpu { height: auto; }
+    #row1 { height: auto; }
+    #row1 Panel { width: 1fr; }
+    #gpu { height: auto; }
     """
     BINDINGS = [
         ("q", "quit", "Quit"),

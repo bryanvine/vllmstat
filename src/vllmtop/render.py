@@ -63,8 +63,11 @@ def _q(label: str, q) -> str:
 
 
 def latency(s: Snapshot) -> str:
+    head = f" {'':6} {'p50':>7} {'p90':>7} {'p99':>7}"
     return (
-        "LATENCY (recent)   p50     p90     p99\n"
+        "LATENCY (recent)\n"
+        + head
+        + "\n"
         + _q("TTFT", s.ttft)
         + "\n"
         + _q("TPOT", s.tpot)
