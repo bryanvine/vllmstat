@@ -157,6 +157,43 @@ def read_gtidle_util(
     return best, new_idle, now
 
 
+# IORESOURCE_PREFETCH bit in the PCI `resource` file's per-BAR flags.
+_IORESOURCE_PREFETCH = 0x2000
+
+
+def read_pci_vram_total(card_path: str) -> int | None:
+    """Total VRAM (bytes) from the largest prefetchable PCI BAR, or ``None``.
+
+    The ``xe`` driver exposes no VRAM-capacity sysfs node, but a discrete GPU
+    maps its entire VRAM through a large prefetchable PCI BAR. ``<card>/device/
+    resource`` lists one ``start end flags`` line per BAR in hex; for any line
+    whose flags set ``IORESOURCE_PREFETCH`` (``0x2000``) and where ``end > start``,
+    the region size is ``end - start + 1``. We return the largest such size.
+    Returns ``None`` when the file is unreadable or no prefetchable BAR exists.
+    Never raises.
+    """
+    raw = read_text(os.path.join(card_path, "device", "resource"))
+    if not raw:
+        return None
+    best: int | None = None
+    for line in raw.splitlines():
+        cols = line.split()
+        if len(cols) < 3:
+            continue
+        try:
+            start = int(cols[0], 16)
+            end = int(cols[1], 16)
+            flags = int(cols[2], 16)
+        except ValueError:
+            continue
+        if not (flags & _IORESOURCE_PREFETCH) or end <= start:
+            continue
+        size = end - start + 1
+        if best is None or size > best:
+            best = size
+    return best
+
+
 def pdev_for_card(card_path: str) -> str | None:
     """Return the PCI address (``pdev``) backing ``card_path``, e.g.
     ``0000:06:00.0``.

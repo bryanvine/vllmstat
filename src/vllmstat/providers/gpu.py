@@ -8,7 +8,12 @@ from collections.abc import Callable
 from vllmstat.core.state import GpuSample, GpuSnapshot
 from vllmstat.providers.gpu_amd import parse_amd_smi_json, read_amd_sysfs
 from vllmstat.providers.gpu_fdinfo import read_fdinfo
-from vllmstat.providers.gpu_intel import pdev_for_card, read_gtidle_util, read_intel_sysfs
+from vllmstat.providers.gpu_intel import (
+    pdev_for_card,
+    read_gtidle_util,
+    read_intel_sysfs,
+    read_pci_vram_total,
+)
 from vllmstat.providers.gpu_sysfs import Card, detect_cards
 
 _SMI_QUERY = (
@@ -194,6 +199,11 @@ class GpuProvider:
             if new_energy is not None:
                 self._intel_energy[c.index] = new_energy
 
+            # Total VRAM capacity from the largest prefetchable PCI BAR — the xe
+            # driver exposes no VRAM-size sysfs node, but the whole of VRAM is
+            # mapped through a big prefetchable BAR (world-readable, no root).
+            g.mem_total = read_pci_vram_total(c.path)
+
             # Utilisation from the GT idle-residency counter — world-readable as
             # non-root, so this is the primary util source on xe/i915.
             gt_util, new_idle, idle_t = read_gtidle_util(
@@ -221,8 +231,7 @@ class GpuProvider:
                 if g.util_gpu is None:
                     g.util_gpu = stats.util_pct
                 g.mem_used = stats.vram_used_bytes
-                # mem_total stays None: total VRAM capacity isn't reliably
-                # available on xe yet.
+                # mem_total comes from the PCI BAR above (fdinfo has no total).
                 self._intel_fdinfo_busy[c.index] = busy
                 self._intel_fdinfo_total[c.index] = total
             gpus.append(g)

@@ -159,6 +159,61 @@ def test_session_panel_none_safe_em_dash():
     assert "—" in text
 
 
+def test_gpu_panel_intel_mem_clock_none_shows_no_slash():
+    # Intel xe has no mem clock -> show "clk 2800 MHz" (no "/—").
+    s = _snap(
+        gpu=GpuSnapshot(
+            available=True,
+            source="intel-sysfs",
+            gpus=[
+                GpuSample(
+                    index=0,
+                    name="Intel Arc B-series (Battlemage)",
+                    vendor="intel",
+                    util_gpu=70.0,
+                    mem_used=20_000_000_000,
+                    mem_total=34_359_738_368,  # 32 GiB total now known
+                    temp_c=57.0,
+                    power_w=116.0,
+                    power_limit_w=275.0,
+                    fan_rpm=1060,
+                    clock_sm_mhz=2800,
+                    clock_mem_mhz=None,
+                )
+            ],
+        )
+    )
+    text = render.gpu(s)
+    assert "clk 2800 MHz" in text
+    assert "clk 2800/" not in text  # no slash when mem clock absent
+    assert "2800/—" not in text
+    # mem_total now set -> used/total + percent rendered (no em dash on total)
+    assert "GB/—" not in text
+    assert "%" in text  # mem percent present
+
+
+def test_gpu_panel_both_clocks_shows_slash():
+    s = _snap(
+        gpu=GpuSnapshot(
+            available=True,
+            source="nvml",
+            gpus=[
+                GpuSample(
+                    index=0,
+                    name="NVIDIA Test",
+                    util_gpu=81,
+                    mem_used=23_100_000_000,
+                    mem_total=24_000_000_000,
+                    clock_sm_mhz=2520,
+                    clock_mem_mhz=9501,
+                )
+            ],
+        )
+    )
+    text = render.gpu(s)
+    assert "clk 2520/9501 MHz" in text
+
+
 def test_gpu_panel_handles_all_none_optional_fields():
     from vllmstat.core.state import GpuSample, GpuSnapshot
 

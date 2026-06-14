@@ -6,6 +6,7 @@ from vllmstat.providers.gpu_intel import (
     pdev_for_card,
     read_gtidle_util,
     read_intel_sysfs,
+    read_pci_vram_total,
 )
 
 
@@ -199,3 +200,76 @@ def test_read_gtidle_util_zero_wall_returns_none(tmp_path: Path):
     _set_gtidle(card, "tile0/gt0", 5000)
     util, _, _ = read_gtidle_util(str(card), prev_idle=idle1, now=100.0, prev_now=t1)
     assert util is None
+
+
+def _write_resource(card: Path, lines: list[str]) -> None:
+    dev = card / "device"
+    dev.mkdir(parents=True, exist_ok=True)
+    (dev / "resource").write_text("\n".join(lines) + "\n")
+
+
+def test_read_pci_vram_total_largest_prefetchable_bar(tmp_path: Path):
+    # A 32 GiB prefetchable BAR (flags bit 0x2000 set) plus smaller / non-pref
+    # BARs. The 32 GiB region's size is end - start + 1 == 32 * 2**30.
+    card = tmp_path / "card0"
+    size = 32 * 2**30
+    start = 0x3800000000
+    end = start + size - 1
+    lines = [
+        # mmio control BAR, prefetchable but tiny
+        "0x00000000d0000000 0x00000000d0ffffff 0x0000000000040200",
+        # the big prefetchable VRAM BAR (0x...0200 has the 0x0200 + 0x2000 bits)
+        f"0x{start:016x} 0x{end:016x} 0x000000000014220c",
+        # expansion ROM, non-prefetchable, must be ignored
+        "0x00000000d1000000 0x00000000d107ffff 0x0000000000000000",
+        # an empty BAR (start==end==0)
+        "0x0000000000000000 0x0000000000000000 0x0000000000000000",
+    ]
+    _write_resource(card, lines)
+    total = read_pci_vram_total(str(card))
+    assert total == size
+    assert total is not None
+    # sanity: matches the documented hardware figure ~34.36 GB
+    assert abs(total / 1e9 - 34.36) < 0.01
+
+
+def test_read_pci_vram_total_ignores_non_prefetchable(tmp_path: Path):
+    # Largest region is NOT prefetchable -> ignored; only the small pref BAR counts.
+    card = tmp_path / "card0"
+    lines = [
+        # huge non-prefetchable region (no 0x2000 bit)
+        "0x0000000000000000 0x00000000ffffffff 0x0000000000040200",
+        # small prefetchable region (0x2000 set) -> 0x1000 bytes
+        "0x00000000d0000000 0x00000000d0000fff 0x000000000014220c",
+    ]
+    _write_resource(card, lines)
+    assert read_pci_vram_total(str(card)) == 0x1000
+
+
+def test_read_pci_vram_total_none_when_no_prefetchable(tmp_path: Path):
+    card = tmp_path / "card0"
+    lines = [
+        "0x00000000d0000000 0x00000000d0ffffff 0x0000000000040200",  # no 0x2000 bit
+    ]
+    _write_resource(card, lines)
+    assert read_pci_vram_total(str(card)) is None
+
+
+def test_read_pci_vram_total_missing_file_returns_none(tmp_path: Path):
+    card = tmp_path / "card0"
+    (card / "device").mkdir(parents=True)
+    # no resource file at all -> None, never raises
+    assert read_pci_vram_total(str(card)) is None
+
+
+def test_read_pci_vram_total_malformed_lines_skipped(tmp_path: Path):
+    card = tmp_path / "card0"
+    lines = [
+        "garbage not three hex fields",
+        "0x1 0x2",  # too few columns
+        "0xNOTHEX 0xVALUES 0x2000",  # unparseable
+        # one valid 4 KiB prefetchable region
+        "0x00000000d0000000 0x00000000d0000fff 0x0000000000002000",
+    ]
+    _write_resource(card, lines)
+    assert read_pci_vram_total(str(card)) == 0x1000

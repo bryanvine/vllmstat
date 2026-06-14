@@ -150,10 +150,13 @@ def gpu(s: Snapshot) -> str:
             parts.append(f"  fan {g.fan_rpm} RPM")
         elif g.fan_pct is not None:
             parts.append(f"  fan {g.fan_pct:.0f}%")
-        if g.clock_sm_mhz is not None or g.clock_mem_mhz is not None:
-            sm = g.clock_sm_mhz if g.clock_sm_mhz is not None else "—"
-            mem = g.clock_mem_mhz if g.clock_mem_mhz is not None else "—"
-            parts.append(f"  clk {sm}/{mem} MHz")
+        # Clocks: NVIDIA reports both SM and memory; Intel xe has no mem clock,
+        # so show just "clk <sm> MHz" (no trailing "/—") when mem is absent.
+        if g.clock_sm_mhz is not None:
+            if g.clock_mem_mhz is not None:
+                parts.append(f"  clk {g.clock_sm_mhz}/{g.clock_mem_mhz} MHz")
+            else:
+                parts.append(f"  clk {g.clock_sm_mhz} MHz")
         # Hints: util now usually comes from gtidle (non-root), so only flag
         # what's actually missing. VRAM stays root-gated on Intel; if it's the
         # only thing absent, point at that. If nothing reads at all, send the
