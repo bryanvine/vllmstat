@@ -140,12 +140,25 @@ class VllmStatApp(App):
         m, _ = divmod(rem, 60)
         return f"{h}h{m:02d}m"
 
+    @staticmethod
+    def _panel_width(panel: Panel) -> int | None:
+        """Inner content width of a panel, or None if not laid out yet."""
+        w = panel.content_size.width
+        if not w:
+            # Fallback before content_size is known: outer size minus border+pad.
+            w = panel.size.width - 4
+        return w if w > 0 else None
+
     def _refresh(self, s: Snapshot) -> None:
         self.p_header.update(
             render.header(s, url=self.cfg.url, interval=self.cfg.interval, uptime=self._uptime())
         )
-        self.p_conc.update(render.concurrency(s, self._history))
-        self.p_tput.update(render.throughput(s, self._history))
+        self.p_conc.update(
+            render.concurrency(s, self._history, width=self._panel_width(self.p_conc))
+        )
+        self.p_tput.update(
+            render.throughput(s, self._history, width=self._panel_width(self.p_tput))
+        )
         self.p_lat.update(render.latency(s))
         self.p_cache.update(render.cache_kv(s, self._history))
         eff = render.efficiency(s)

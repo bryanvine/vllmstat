@@ -3,6 +3,17 @@ from __future__ import annotations
 from vllmstat.core.history import History
 from vllmstat.core.state import Snapshot
 from vllmstat.format import fmt_bytes, fmt_dur, fmt_pct, fmt_si, sparkline
+from vllmstat.plot import braille_plot
+
+# Default plot width when the panel width is unknown (e.g. first render).
+_DEFAULT_PLOT_WIDTH = 30
+_MIN_PLOT_WIDTH = 8
+
+
+def _plot_width(width: int | None) -> int:
+    if not width or width <= 0:
+        return _DEFAULT_PLOT_WIDTH
+    return max(_MIN_PLOT_WIDTH, int(width))
 
 
 def header(s: Snapshot, *, url: str, interval: float, uptime: str) -> str:
@@ -12,27 +23,31 @@ def header(s: Snapshot, *, url: str, interval: float, uptime: str) -> str:
     return f"{parts}  {state}  up {uptime}  {interval:.1f}s"
 
 
-def concurrency(s: Snapshot, h: History) -> str:
-    run_spark = sparkline(list(h.series("running").values))
-    wait_spark = sparkline(list(h.series("waiting").values))
+def concurrency(s: Snapshot, h: History, *, width: int | None = None) -> str:
+    pw = _plot_width(width)
+    vals = list(h.series("running").values)
+    plot = "\n".join(braille_plot(vals, width=pw, height=4, lo=0))
     seqs = f"  max-seqs {s.max_num_seqs}" if s.max_num_seqs else ""
     return (
         f"CONCURRENCY\n"
-        f" running {s.running:.0f}  ▕{run_spark}▏\n"
-        f" waiting {s.waiting:.0f}  ▕{wait_spark}▏\n"
-        f" preempt {s.preempt_rate:.1f}/s{seqs}"
+        f" running {s.running:.0f} · waiting {s.waiting:.0f} · "
+        f"preempt {s.preempt_rate:.1f}/s{seqs}\n"
+        f"{plot}\n"
+        f" running · last {len(vals)}s"
     )
 
 
-def throughput(s: Snapshot, h: History) -> str:
-    g = sparkline(list(h.series("gen_tps").values))
-    p = sparkline(list(h.series("prompt_tps").values))
+def throughput(s: Snapshot, h: History, *, width: int | None = None) -> str:
+    pw = _plot_width(width)
+    vals = list(h.series("gen_tps").values)
+    plot = "\n".join(braille_plot(vals, width=pw, height=4, lo=0))
     tpi = f"{s.tokens_per_iter:.0f}" if s.tokens_per_iter else "—"
     return (
         f"THROUGHPUT\n"
-        f" gen    {s.gen_tps:.0f} tok/s ▕{g}▏\n"
-        f" prompt {s.prompt_tps:.0f} tok/s ▕{p}▏\n"
-        f" tok/iter {tpi} · {s.req_rate:.1f} req/s"
+        f" gen {s.gen_tps:.0f} tok/s · prompt {s.prompt_tps:.0f} tok/s · "
+        f"tok/iter {tpi} · {s.req_rate:.1f} req/s\n"
+        f"{plot}\n"
+        f" gen tok/s · last {len(vals)}s"
     )
 
 
