@@ -38,9 +38,37 @@ def test_cache_kv_panel_shows_dtype_and_ratio():
     assert "444" in text  # capacity shown (e.g. 445k or 444,608)
 
 
-def test_throughput_panel_shows_tps():
-    text = render.throughput(_snap(), History())
-    assert "142" in text
+def _has_braille(text: str) -> bool:
+    return any(0x2800 <= ord(c) <= 0x28FF for c in text)
+
+
+def test_throughput_panel_shows_tps_and_braille_plot():
+    h = History()
+    for v in [10, 50, 90, 142, 142]:
+        h.push("gen_tps", v)
+    text = render.throughput(_snap(), h, width=40)
+    assert "142" in text  # numeric gen tok/s still shown
+    assert "318" in text  # prompt still shown as text
+    assert _has_braille(text)  # braille area plot present
+    assert "gen tok/s" in text  # caption
+
+
+def test_concurrency_panel_shows_counts_and_braille_plot():
+    h = History()
+    for v in [0, 1, 2, 3, 2]:
+        h.push("running", v)
+    text = render.concurrency(_snap(running=2.0, waiting=0.0), h, width=40)
+    assert "running 2" in text
+    assert "waiting 0" in text
+    assert _has_braille(text)
+    assert "preempt" in text
+
+
+def test_timeseries_panels_no_braille_when_empty_history():
+    # No samples yet -> braille rows are blank; must not raise.
+    text_t = render.throughput(_snap(), History(), width=40)
+    text_c = render.concurrency(_snap(), History(), width=40)
+    assert "142" in text_t and "running" in text_c
 
 
 def test_gpu_panel_unavailable_message():
