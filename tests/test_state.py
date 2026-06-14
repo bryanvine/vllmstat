@@ -31,3 +31,17 @@ def test_gpu_sample_accepts_vendor_and_fan_rpm():
     g = GpuSample(index=1, name="Intel Arc", vendor="intel", fan_rpm=1060)
     assert g.vendor == "intel"
     assert g.fan_rpm == 1060
+
+
+def test_instance_defaults():
+    from vllmstat.core.state import Instance
+
+    i = Instance(name="a", url="http://localhost:8000")
+    assert (i.metrics_path, i.api_key, i.gpus, i.locality) == ("/metrics", None, (), "local")
+
+
+def test_fleet_snapshot_defaults():
+    from vllmstat.core.state import FleetSnapshot
+
+    fs = FleetSnapshot(ts=1.0)
+    assert fs.items == [] and fs.gpu.available is False

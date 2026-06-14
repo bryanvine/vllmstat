@@ -37,6 +37,23 @@ class GpuSnapshot:
 
 
 @dataclass
+class Instance:
+    name: str
+    url: str
+    metrics_path: str = "/metrics"
+    api_key: str | None = None
+    gpus: tuple[int, ...] = ()
+    locality: str = "local"  # "local" | "remote"
+
+
+@dataclass
+class FleetSnapshot:
+    ts: float
+    items: list[tuple[Instance, Snapshot]] = field(default_factory=list)
+    gpu: GpuSnapshot = field(default_factory=GpuSnapshot)
+
+
+@dataclass
 class Snapshot:
     ts: float
     connected: bool
