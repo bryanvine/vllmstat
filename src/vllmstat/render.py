@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import time
+
 from vllmstat.core.history import History
 from vllmstat.core.state import FleetSnapshot, Instance, Snapshot
+from vllmstat.core.tee import TeeEvent
 from vllmstat.format import fmt_bytes, fmt_dur, fmt_dur_hms, fmt_pct, fmt_si, sparkline
 from vllmstat.plot import braille_plot
 
@@ -173,6 +176,37 @@ def efficiency(s: Snapshot) -> str:
     if s.mfu is not None:
         parts.append(f"MFU {fmt_pct(s.mfu)}")
     return "EFFICIENCY  " + " · ".join(parts) if parts else ""
+
+
+def _tee_one_line(text: str, width: int) -> str:
+    s = " ".join((text or "").split())
+    return s if len(s) <= width else s[: max(1, width - 1)] + "…"
+
+
+def tee(
+    events: list[TeeEvent],
+    *,
+    width: int | None = None,
+    height: int = 10,
+    source_desc: str = "",
+) -> str:
+    w = width or _DEFAULT_PLOT_WIDTH
+    head = f"TEE · {source_desc or '—'}"
+    rows: list[str] = []
+    for e in events:
+        if e.kind == "http":
+            ts = time.strftime("%H:%M:%S", time.localtime(e.ts))
+            mark = "!" if (e.status or 0) >= 400 else " "
+            line = f"{mark}{ts} {e.method or '?':<4} {e.path or ''}  {e.status or ''}"
+            rows.append(_tee_one_line(line, w))
+        elif e.kind == "exchange":
+            rows.append(_tee_one_line(f"▶ {e.prompt or ''}", w))
+            rows.append(_tee_one_line(f"◀ {e.response or ''}{'' if e.done else ' ▌'}", w))
+        else:  # note
+            rows.append(_tee_one_line(f"· {e.text or ''}", w))
+    if not rows:
+        return f"{head}\n (waiting for requests…)"
+    return head + "\n" + "\n".join(rows[-(height - 1) :])
 
 
 def gpu(s: Snapshot) -> str:

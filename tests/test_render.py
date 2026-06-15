@@ -435,3 +435,29 @@ def test_detail_header_breadcrumb():
         uptime="0h01m",
     )
     assert "qwen-30b" in h and "esc back" in h
+
+
+def test_render_tee_http_and_empty():
+    from vllmstat import render
+    from vllmstat.core.tee import TeeEvent
+
+    assert "waiting" in render.tee([], width=60, source_desc="docker:x")
+    out = render.tee(
+        [TeeEvent(ts=0.0, kind="http", method="POST", path="/v1/chat/completions", status=200)],
+        width=60,
+        source_desc="docker:x",
+    )
+    assert "TEE" in out and "POST" in out and "/v1/chat/completions" in out and "200" in out
+
+
+def test_render_tee_marks_errors_and_exchange():
+    from vllmstat import render
+    from vllmstat.core.tee import TeeEvent
+
+    err = render.tee([TeeEvent(ts=0.0, kind="http", method="GET", path="/x", status=503)], width=40)
+    assert "!" in err
+    ex = render.tee(
+        [TeeEvent(ts=0.0, kind="exchange", prompt="hi there", response="hello", done=False)],
+        width=40,
+    )
+    assert "▶" in ex and "◀" in ex
