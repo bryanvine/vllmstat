@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
 
 from vllmstat.config import Config
 from vllmstat.core.metrics import MetricsEngine
@@ -54,6 +55,8 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
         defaults_metrics_path=cfg.metrics_path,
         local_names=local_names,
     )
+    if cfg.logs:
+        cfg.instances = [replace(i, logs=i.logs or cfg.logs) for i in cfg.instances]
     return cfg
 
 
@@ -136,6 +139,14 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     env = dict(os.environ)
     cfg = Config.from_sources(argv, env)
+    if cfg.proxy:
+        from vllmstat.providers.proxy import parse_proxy_addr
+
+        try:
+            parse_proxy_addr(cfg.proxy)
+        except ValueError as e:
+            print(f"vllmstat: {e}", file=sys.stderr)
+            return 2
     resolve_instances(cfg, env)
     if cfg.once and cfg.json:
         return run_once_json(cfg)

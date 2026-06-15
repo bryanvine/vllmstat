@@ -128,3 +128,35 @@ async def test_proxy_starts_and_shows_tee_panel():
         await pilot.pause(0.3)
         assert app._proxy is not None
         assert app.query_one("#tee").display is True
+
+
+@pytest.mark.asyncio
+async def test_tee_panel_with_logs_after_resolve_instances():
+    from vllmstat.cli import resolve_instances
+
+    cfg = Config.from_sources(["--mock", "--logs", "docker:does-not-exist"], {})
+    resolve_instances(cfg, {})
+    assert cfg.instances[0].logs == "docker:does-not-exist"
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert app.query_one("#tee").display is True
+        assert len(app._tailers) == 1
+
+
+@pytest.mark.asyncio
+async def test_proxy_starts_after_resolve_instances():
+    from vllmstat.cli import resolve_instances
+
+    cfg = Config.from_sources(
+        ["--mock", "--url", "http://localhost:8000", "--proxy", "127.0.0.1:0"],
+        {},
+    )
+    resolve_instances(cfg, {})
+    assert len(cfg.instances) == 1
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert app._proxy is not None
+        assert app.fleet.runtimes[0].instance.url == "http://localhost:8000"
+        assert app.query_one("#tee").display is True

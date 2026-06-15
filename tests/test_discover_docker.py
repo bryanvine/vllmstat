@@ -81,3 +81,11 @@ def test_discover_docker_failure_returns_empty():
         raise FileNotFoundError("docker missing")
 
     assert discover_docker(run=run) == []
+
+
+def test_discover_docker_failure_prints_stderr(capsys):
+    def run(cmd):
+        raise FileNotFoundError("docker missing")
+
+    assert discover_docker(run=run) == []
+    assert "docker discovery failed" in capsys.readouterr().err

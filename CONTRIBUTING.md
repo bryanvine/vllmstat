@@ -17,10 +17,10 @@ Python 3.10 or later is required.
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,proxy]"
 ```
 
-This installs `vllmstat` in editable mode together with all development dependencies (pytest, pytest-asyncio, ruff, pyright).
+This installs `vllmstat` in editable mode together with all development dependencies (pytest, pytest-asyncio, ruff, pyright). The optional `proxy` extra adds `aiohttp` for tee/proxy integration tests.
 
 ## Run the tests
 
@@ -28,7 +28,7 @@ This installs `vllmstat` in editable mode together with all development dependen
 pytest -q
 ```
 
-All 60 tests should pass. The test suite covers pure logic (histogram quantiles, EWMA rates, KV compression), providers (mock transport for the vLLM HTTP client), and the Textual app itself.
+All **216** tests should pass. The suite covers pure logic (histogram quantiles, EWMA rates, KV compression), fleet polling, tee/log tailing, reverse proxy, GPU vendors (NVIDIA/AMD/Intel via sysfs and fdinfo), Docker discovery, providers (mock transport for the vLLM HTTP client), and the Textual app itself.
 
 ## Lint and format
 
@@ -37,7 +37,7 @@ ruff check .
 ruff format .
 ```
 
-`ruff check` enforces style rules (E, F, I, UP, B, W). `ruff format` auto-formats. The CI gate runs `ruff format --check .` (read-only), so format before committing.
+`ruff check` enforces style rules (E, F, I, UP, B, W). `ruff format` auto-formats. Format before committing.
 
 ## Type checking
 
@@ -68,3 +68,5 @@ ruff check . && ruff format --check . && pyright && pytest -q
 ```
 
 All four must be clean (zero ruff issues, zero format diffs, zero pyright errors, all tests passing) before opening a pull request.
+
+**Note:** GitHub Actions CI (`.github/workflows/ci.yml`) is planned but not yet wired up in this repository. Run the full local gate above before submitting changes.

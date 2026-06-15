@@ -50,3 +50,36 @@ def test_logtailer_follows_file(tmp_path):
 
     asyncio.run(go())
     assert any(e.text == "hello" for e in got)
+
+
+def test_logtailer_survives_observer_exception(tmp_path):
+    p = tmp_path / "log.txt"
+    p.write_text("")
+    got = []
+    n_calls = 0
+
+    def boom(ev):
+        nonlocal n_calls
+        n_calls += 1
+        if n_calls == 1:
+            raise RuntimeError("observer broke")
+        got.append(ev)
+
+    tail = LogTailer(
+        str(p),
+        on_event=boom,
+        parse=lambda ln: TeeEvent(ts=0.0, kind="note", text=ln) if ln else None,
+    )
+
+    async def go():
+        tail.start()
+        await asyncio.sleep(0.1)
+        with p.open("a") as f:
+            f.write("first\nsecond\n")
+            f.flush()
+        await asyncio.sleep(0.5)
+        await tail.stop()
+
+    asyncio.run(go())
+    assert n_calls >= 2
+    assert any(e.text == "second" for e in got)

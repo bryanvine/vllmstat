@@ -105,13 +105,19 @@ class LogTailer:
                 self._note(f"waiting for {path}…")
                 await asyncio.sleep(1.0)
 
+    def _emit(self, ev: TeeEvent) -> None:
+        try:
+            self._on_event(ev)
+        except Exception:  # noqa: BLE001 - an observer must never break the tailer
+            pass
+
     def _feed(self, line: str) -> None:
         ev = self._parse(line)
         if ev is not None:
-            self._on_event(ev)
+            self._emit(ev)
 
     def _note(self, text: str) -> None:
-        self._on_event(TeeEvent(ts=time.time(), kind="note", text=text))
+        self._emit(TeeEvent(ts=time.time(), kind="note", text=text))
 
     def terminate(self) -> None:
         """Synchronous best-effort shutdown for app exit."""

@@ -17,6 +17,7 @@ class ModelInfo:
     model_names: list[str]
     max_model_len: int | None
     root: str | None
+    error: str | None = None
 
 
 class VllmProvider:
@@ -48,8 +49,8 @@ class VllmProvider:
             r = await self._client.get("/v1/models", timeout=self._timeout)
             r.raise_for_status()
             data = r.json().get("data", [])
-        except Exception:  # noqa: BLE001
-            return ModelInfo(model_names=[], max_model_len=None, root=None)
+        except Exception as e:  # noqa: BLE001
+            return ModelInfo(model_names=[], max_model_len=None, root=None, error=str(e))
         names = [d.get("id") for d in data if d.get("id")]
         max_len = next((d.get("max_model_len") for d in data if d.get("max_model_len")), None)
         root = next((d.get("root") for d in data if d.get("root")), None)

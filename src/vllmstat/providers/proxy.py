@@ -93,10 +93,31 @@ class SSEAccumulator:
 
 
 def parse_proxy_addr(s: str) -> tuple[str, int]:
-    if ":" in s:
-        host, _, port = s.rpartition(":")
-        return (host or "0.0.0.0", int(port))
-    return ("0.0.0.0", int(s))
+    """Parse ``HOST:PORT``, ``[IPV6]:PORT``, or bare ``PORT`` (bind all interfaces)."""
+    s = s.strip()
+    if not s:
+        raise ValueError("invalid proxy address: empty string")
+    if s.startswith("["):
+        end = s.find("]")
+        if end < 0:
+            raise ValueError(f"invalid proxy address: missing ']' in {s!r}")
+        host = s[1:end]
+        rest = s[end + 1 :]
+        if not rest.startswith(":") or len(rest) == 1:
+            raise ValueError(f"invalid proxy address: expected port after ']' in {s!r}")
+        port_s = rest[1:]
+    elif ":" in s:
+        host, _, port_s = s.rpartition(":")
+        host = host or "0.0.0.0"
+    else:
+        host, port_s = "0.0.0.0", s
+    try:
+        port = int(port_s)
+    except ValueError as e:
+        raise ValueError(f"invalid proxy port: {port_s!r}") from e
+    if not 0 <= port <= 65535:
+        raise ValueError(f"invalid proxy port: {port} (must be 0-65535)")
+    return host, port
 
 
 def aiohttp_available() -> bool:

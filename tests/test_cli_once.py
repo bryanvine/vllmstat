@@ -47,3 +47,26 @@ def test_resolve_instances_applies_config_globals(tmp_path):
     assert cfg.interval == 2.5  # config global applied (flag left at default)
     assert cfg.gpu is False
     assert len(cfg.instances) == 1 and cfg.instances[0].name == "a"
+
+
+def test_resolve_instances_applies_cli_logs_default():
+    from vllmstat.cli import resolve_instances
+    from vllmstat.config import Config
+
+    cfg = Config.from_sources(["--logs", "docker:vllm-xpu"], {})
+    resolve_instances(cfg, {})
+    assert len(cfg.instances) == 1
+    assert cfg.instances[0].logs == "docker:vllm-xpu"
+
+
+def test_resolve_instances_cli_logs_do_not_override_per_instance(tmp_path):
+    from vllmstat.cli import resolve_instances
+    from vllmstat.config import Config
+
+    p = tmp_path / "vllmstat.toml"
+    p.write_text(
+        '[[instance]]\nname = "a"\nurl = "http://localhost:8000"\nlogs = "docker:from-config"\n'
+    )
+    cfg = Config.from_sources(["--config", str(p), "--logs", "docker:cli-default"], {})
+    resolve_instances(cfg, {})
+    assert cfg.instances[0].logs == "docker:from-config"
