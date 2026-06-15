@@ -50,3 +50,11 @@ def test_logs_flag():
 def test_proxy_flag():
     c = Config.from_sources(["--proxy", "9000"], {})
     assert c.proxy == "9000"
+
+
+def test_main_rejects_invalid_proxy(capsys):
+    from vllmstat.cli import main
+
+    rc = main(["--mock", "--proxy", "not-a-port"])
+    assert rc == 2
+    assert "invalid proxy port" in capsys.readouterr().err

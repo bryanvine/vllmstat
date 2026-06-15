@@ -70,6 +70,16 @@ def test_parse_json_content_chat_with_usage():
 def test_parse_proxy_addr():
     assert parse_proxy_addr("9000") == ("0.0.0.0", 9000)
     assert parse_proxy_addr("127.0.0.1:9000") == ("127.0.0.1", 9000)
+    assert parse_proxy_addr("[::1]:9000") == ("::1", 9000)
+
+
+def test_parse_proxy_addr_rejects_invalid():
+    import pytest
+
+    with pytest.raises(ValueError, match="invalid proxy port"):
+        parse_proxy_addr("127.0.0.1:abc")
+    with pytest.raises(ValueError, match="missing"):
+        parse_proxy_addr("[::1")
 
 
 def test_aiohttp_available_is_bool():
