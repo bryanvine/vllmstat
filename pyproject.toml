@@ -27,7 +27,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "pyright>=1.1"]
+proxy = ["aiohttp>=3.9"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "pyright>=1.1", "aiohttp>=3.9"]
 
 [project.scripts]
 vllmstat = "vllmstat.cli:main"
