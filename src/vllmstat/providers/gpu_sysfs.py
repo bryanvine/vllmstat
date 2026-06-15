@@ -8,6 +8,7 @@ rather than crashing the app.
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 from dataclasses import dataclass
@@ -60,6 +61,33 @@ def read_int(path: str) -> int | None:
         return int(raw, 0) if raw.lower().startswith(("0x", "0o", "0b")) else int(raw)
     except ValueError:
         return None
+
+
+def hwmon_dir(card_path: str, names: tuple[str, ...] = ()) -> str | None:
+    """Return the hwmon dir under ``card_path`` whose ``name`` matches ``names``.
+
+    When ``names`` is empty or no name matches, returns the first hwmon dir.
+    Never raises.
+    """
+    base = os.path.join(card_path, "device", "hwmon")
+    try:
+        candidates = sorted(glob.glob(os.path.join(base, "hwmon*")))
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    if names:
+        for hw in candidates:
+            n = read_text(os.path.join(hw, "name"))
+            if n in names:
+                return hw
+    return candidates[0]
+
+
+def scale_int(path: str, denom: float) -> float | None:
+    """Return ``read_int(path) / denom`` or ``None`` when unreadable."""
+    val = read_int(path)
+    return (val / denom) if val is not None else None
 
 
 def _vendor_key(vendor_id: int | None) -> str:

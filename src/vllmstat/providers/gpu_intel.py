@@ -19,30 +19,10 @@ import glob
 import os
 
 from vllmstat.core.state import GpuSample
-from vllmstat.providers.gpu_sysfs import pci_name, read_int, read_text
+from vllmstat.providers.gpu_sysfs import hwmon_dir, pci_name, read_int, read_text, scale_int
 
 # Energy-delta carry: (energy_microjoules, monotonic_seconds).
 EnergyState = tuple[int, float]
-
-
-def _hwmon_dir(card_path: str) -> str | None:
-    """Return the xe/i915 hwmon dir (else the first hwmon under the card)."""
-    base = os.path.join(card_path, "device", "hwmon")
-    try:
-        candidates = sorted(glob.glob(os.path.join(base, "hwmon*")))
-    except OSError:
-        return None
-    if not candidates:
-        return None
-    for hw in candidates:
-        if read_text(os.path.join(hw, "name")) in ("xe", "i915"):
-            return hw
-    return candidates[0]
-
-
-def _div(path: str, denom: float) -> float | None:
-    val = read_int(path)
-    return (val / denom) if val is not None else None
 
 
 def read_intel_sysfs(
@@ -68,13 +48,13 @@ def read_intel_sysfs(
     new_energy: EnergyState | None = None
     power_w: float | None = None
 
-    hw = _hwmon_dir(card_path)
+    hw = hwmon_dir(card_path, ("xe", "i915"))
     if hw is not None:
         # Package temp (temp2_input); fall back to temp1_input.
-        temp_c = _div(os.path.join(hw, "temp2_input"), 1000.0)
+        temp_c = scale_int(os.path.join(hw, "temp2_input"), 1000.0)
         if temp_c is None:
-            temp_c = _div(os.path.join(hw, "temp1_input"), 1000.0)
-        power_limit_w = _div(os.path.join(hw, "power1_cap"), 1e6)
+            temp_c = scale_int(os.path.join(hw, "temp1_input"), 1000.0)
+        power_limit_w = scale_int(os.path.join(hw, "power1_cap"), 1e6)
         fan_rpm = read_int(os.path.join(hw, "fan1_input"))
 
         energy = read_int(os.path.join(hw, "energy1_input"))

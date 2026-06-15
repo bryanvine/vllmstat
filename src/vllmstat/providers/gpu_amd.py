@@ -7,36 +7,15 @@ degrades to ``None`` fields rather than an exception, so the app falls back to
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 import re
 from typing import Any
 
 from vllmstat.core.state import GpuSample
-from vllmstat.providers.gpu_sysfs import pci_name, read_int, read_text
+from vllmstat.providers.gpu_sysfs import hwmon_dir, pci_name, read_int, read_text, scale_int
 
 _SCLK_ACTIVE_RE = re.compile(r"^\s*\d+:\s*([\d.]+)\s*MHz\s*\*", re.IGNORECASE | re.MULTILINE)
-
-
-def _hwmon_dir(card_path: str, want: str = "amdgpu") -> str | None:
-    """Return the hwmon dir whose ``name`` matches ``want`` (else the first one)."""
-    base = os.path.join(card_path, "device", "hwmon")
-    try:
-        candidates = sorted(glob.glob(os.path.join(base, "hwmon*")))
-    except OSError:
-        return None
-    if not candidates:
-        return None
-    for hw in candidates:
-        if read_text(os.path.join(hw, "name")) == want:
-            return hw
-    return candidates[0]
-
-
-def _div(path: str, denom: float) -> float | None:
-    val = read_int(path)
-    return (val / denom) if val is not None else None
 
 
 def _sclk_from_pp_dpm(card_path: str) -> int | None:
@@ -62,11 +41,11 @@ def read_amd_sysfs(card_path: str) -> GpuSample:
     temp_c = power_w = power_limit_w = None
     fan_rpm = None
     clock_sm = None
-    hw = _hwmon_dir(card_path)
+    hw = hwmon_dir(card_path, ("amdgpu",))
     if hw is not None:
-        temp_c = _div(os.path.join(hw, "temp1_input"), 1000.0)
-        power_w = _div(os.path.join(hw, "power1_average"), 1e6)
-        power_limit_w = _div(os.path.join(hw, "power1_cap"), 1e6)
+        temp_c = scale_int(os.path.join(hw, "temp1_input"), 1000.0)
+        power_w = scale_int(os.path.join(hw, "power1_average"), 1e6)
+        power_limit_w = scale_int(os.path.join(hw, "power1_cap"), 1e6)
         fan_rpm = read_int(os.path.join(hw, "fan1_input"))
         freq1 = read_int(os.path.join(hw, "freq1_input"))
         if freq1 is not None:
