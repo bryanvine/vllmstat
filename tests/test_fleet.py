@@ -59,6 +59,17 @@ def test_runtime_poll_ok():
     assert rt.history.series("running").values[-1] == 3.0
 
 
+def test_runtime_poll_ok_when_model_info_fails():
+    class Provider(FakeProvider):
+        async def fetch_model_info(self) -> ModelInfo:
+            return ModelInfo(model_names=[], max_model_len=None, root=None, error="models down")
+
+    inst = Instance(name="a", url="http://localhost:8000")
+    rt = InstanceRuntime(inst, provider=Provider(METRICS))
+    snap = asyncio.run(rt.poll(1.0))
+    assert snap.connected and snap.running == 3.0
+
+
 def test_fleet_poll_isolates_failures_and_slices_gpu():
     a = InstanceRuntime(
         Instance("a", "http://localhost:8000", gpus=(0,), locality="local"),

@@ -46,3 +46,14 @@ async def test_fetch_metrics_error_sets_flag():
     raw = await p.fetch_metrics()
     assert raw.fetched_ok is False
     assert raw.error is not None
+
+
+async def test_fetch_model_info_error_sets_flag():
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(boom), base_url="http://t")
+    p = VllmProvider(base_url="http://t", client=client)
+    info = await p.fetch_model_info()
+    assert info.model_names == []
+    assert info.error is not None
