@@ -148,7 +148,10 @@ async def test_tee_panel_with_logs_after_resolve_instances():
 async def test_proxy_starts_after_resolve_instances():
     from vllmstat.cli import resolve_instances
 
-    cfg = Config.from_sources(["--mock", "--url", "http://localhost:8000", "--proxy", "127.0.0.1:0"], {})
+    cfg = Config.from_sources(
+        ["--mock", "--url", "http://localhost:8000", "--proxy", "127.0.0.1:0"],
+        {},
+    )
     resolve_instances(cfg, {})
     assert len(cfg.instances) == 1
     app = VllmStatApp(cfg)
