@@ -34,8 +34,8 @@ class FlakyVllm:
 async def test_disconnect_marks_not_connected_but_keeps_running():
     cfg = Config(mock=False, interval=0.05, gpu=False)
     app = VllmStatApp(cfg)
-    app._vllm = FlakyVllm()  # type: ignore[assignment]
-    app._mock = None
+    # Inject the flaky provider into the single instance's runtime (fleet architecture).
+    app.fleet.runtimes[0]._provider = FlakyVllm()  # type: ignore[assignment]
     async with app.run_test() as pilot:
         await pilot.pause(0.3)
         assert app.snapshot is not None

@@ -2,6 +2,7 @@ import pytest
 
 from vllmstat.app import VllmStatApp
 from vllmstat.config import Config
+from vllmstat.core.state import Instance
 
 
 @pytest.mark.asyncio
@@ -49,3 +50,34 @@ async def test_app_boots_with_session_panel_and_reset_key():
         await pilot.press("r")
         await pilot.pause(0.15)
         assert app.snapshot is not None
+
+
+@pytest.mark.asyncio
+async def test_single_instance_mounts_detail():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    cfg.instances = [Instance("a", "http://localhost:8000")]
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert app.is_fleet is False
+        assert app.query_one("#detail").display is True
+        assert app.p_overview.display is False
+
+
+@pytest.mark.asyncio
+async def test_fleet_mounts_overview_and_drills_in():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    cfg.instances = [Instance("a", "http://localhost:8000"), Instance("b", "http://localhost:8001")]
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert app.is_fleet is True
+        assert app.p_overview.display is True
+        await pilot.press("down")
+        assert app.selected == 1
+        await pilot.press("enter")
+        assert app.in_detail is True
+        assert app.query_one("#detail").display is True
+        await pilot.press("escape")
+        assert app.in_detail is False
+        assert app.p_overview.display is True
