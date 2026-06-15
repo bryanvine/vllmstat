@@ -94,3 +94,26 @@ async def test_single_instance_shows_all_host_gpus():
         assert app.snapshot is not None
         assert app.snapshot.gpu.available is True
         assert len(app.snapshot.gpu.gpus) >= 1
+
+
+@pytest.mark.asyncio
+async def test_tee_panel_hidden_without_source():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert app.query_one("#tee").display is False
+
+
+@pytest.mark.asyncio
+async def test_tee_panel_shows_with_source_and_toggles():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    cfg.logs = "docker:does-not-exist"  # tailer emits a note / exits; never crashes
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert app.query_one("#tee").display is True
+        await pilot.press("t")
+        assert app.query_one("#tee").display is False
+        await pilot.press("t")
+        assert app.query_one("#tee").display is True

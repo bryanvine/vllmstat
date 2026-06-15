@@ -14,6 +14,7 @@ from vllmstat.core.history import History
 from vllmstat.core.resolve import derive_name
 from vllmstat.core.state import FleetSnapshot, GpuSnapshot, Instance, Snapshot
 from vllmstat.providers.gpu import GpuProvider
+from vllmstat.providers.logsource import LogTailer
 from vllmstat.providers.mock import MockProvider, MockVllmProvider, mock_gpu_snapshot
 from vllmstat.widgets import Panel
 
@@ -25,11 +26,13 @@ class VllmStatApp(App):
     #row1 Panel { width: 1fr; }
     #gpu { height: auto; }
     #overview { height: auto; }
+    #tee { height: auto; }
     """
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("p", "toggle_pause", "Pause"),
         ("g", "toggle_gpu", "GPU"),
+        ("t", "toggle_tee", "Tee"),
         ("r", "reset_session", "Reset"),
         ("up,k", "cursor_up", "Up"),
         ("down,j", "cursor_down", "Down"),
@@ -52,6 +55,7 @@ class VllmStatApp(App):
                 api_key=cfg.api_key,
                 gpus=(),
                 locality="local",
+                logs=cfg.logs,
             )
         ]
         self.is_fleet = len(instances) > 1
@@ -71,6 +75,8 @@ class VllmStatApp(App):
         self._tick_n = 0
         self._timer: Timer | None = None
         self._in_tick = False
+        self.tee_visible = True
+        self._tailers: list[LogTailer] = []
 
     def compose(self) -> ComposeResult:
         self.p_overview = Panel(id="overview")
@@ -84,6 +90,7 @@ class VllmStatApp(App):
         self.p_eff = Panel(id="eff")
         self.p_spec = Panel(id="spec")
         self.p_gpu = Panel(id="gpu")
+        self.p_tee = Panel(id="tee")
         with Vertical(id="detail"):
             yield self.p_header
             with Horizontal(id="row1"):
@@ -95,12 +102,23 @@ class VllmStatApp(App):
             yield self.p_eff
             yield self.p_spec
             yield self.p_gpu
+            yield self.p_tee
         yield Footer()
 
     def on_mount(self) -> None:
         self._apply_mode()
+        self.p_tee.display = False
+        for rt in self.fleet.runtimes:
+            if rt.instance.logs:
+                tailer = LogTailer(rt.instance.logs, on_event=rt.tee.push)
+                tailer.start()
+                self._tailers.append(tailer)
         self._timer = self.set_interval(self.cfg.interval, self.tick)
         self.call_later(self.tick)
+
+    def on_unmount(self) -> None:
+        for tailer in self._tailers:
+            tailer.terminate()
 
     def _apply_mode(self) -> None:
         self.p_overview.display = self.is_fleet and not self.in_detail
@@ -177,6 +195,18 @@ class VllmStatApp(App):
         self.p_spec.display = bool(spec)
         self.p_spec.update(spec)
         self.p_gpu.update(render.gpu(snap))
+        rt = self.fleet.runtimes[min(self.selected, len(self.fleet.runtimes) - 1)]
+        has_tee = bool(inst.logs) or len(rt.tee) > 0
+        self.p_tee.display = has_tee and self.tee_visible
+        if self.p_tee.display:
+            self.p_tee.update(
+                render.tee(
+                    rt.tee.recent(40),
+                    width=self._panel_width(self.p_tee),
+                    source_desc=inst.logs or "proxy",
+                    height=12,
+                )
+            )
 
     def _uptime(self) -> str:
         secs = int(time.monotonic() - self._start)
@@ -196,6 +226,10 @@ class VllmStatApp(App):
 
     def action_toggle_gpu(self) -> None:
         self._gpu.enabled = not self._gpu.enabled
+        self._refresh()
+
+    def action_toggle_tee(self) -> None:
+        self.tee_visible = not self.tee_visible
         self._refresh()
 
     def action_reset_session(self) -> None:
@@ -239,5 +273,10 @@ class VllmStatApp(App):
 
 
 def run_app(cfg: Config) -> int:
-    VllmStatApp(cfg).run()
+    app = VllmStatApp(cfg)
+    try:
+        app.run()
+    finally:
+        for tailer in app._tailers:
+            tailer.terminate()
     return 0
