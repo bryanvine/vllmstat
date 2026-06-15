@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import math
 
-from vllmstat.core.state import GpuSample, GpuSnapshot
+from vllmstat.core.fleet import Fleet, InstanceRuntime
+from vllmstat.core.state import GpuSample, GpuSnapshot, Instance
+from vllmstat.providers.vllm import ModelInfo, RawText
 
 _M = "mock-7b"
 
@@ -125,3 +127,35 @@ class MockProvider:
         lines.append(f"{name}_count {cum + n:.1f}")
         lines.append(f"{name}_sum {cum * base_le:.3f}")
         return "\n".join(lines)
+
+
+class MockVllmProvider:
+    """Wraps MockProvider as an async provider compatible with InstanceRuntime."""
+
+    def __init__(self, mock: MockProvider) -> None:
+        self._mock = mock
+
+    async def fetch_metrics(self) -> RawText:
+        return RawText(text=self._mock.metrics_text(), fetched_ok=True)
+
+    async def fetch_model_info(self) -> ModelInfo:
+        return ModelInfo(model_names=["mock-model"], max_model_len=None, root=None)
+
+    async def aclose(self) -> None:
+        pass
+
+
+def mock_fleet(
+    names: tuple[str, ...] = ("qwen-30b", "llama-70b", "mixtral"),
+) -> Fleet:
+    """Build a Fleet of mock InstanceRuntimes, one per name."""
+    rts = []
+    for i, name in enumerate(names):
+        inst = Instance(
+            name=name,
+            url=f"http://localhost:{8000 + i}",
+            gpus=(i,),
+            locality="local",
+        )
+        rts.append(InstanceRuntime(inst, provider=MockVllmProvider(MockProvider())))
+    return Fleet([], runtimes=rts)
