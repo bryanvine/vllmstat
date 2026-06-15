@@ -32,3 +32,18 @@ def test_once_json_fleet_emits_array(capsys):
     out = _json.loads(capsys.readouterr().out)
     assert isinstance(out, list) and len(out) == 2
     assert all("name" in e and "running" in e["snapshot"] for e in out)
+
+
+def test_resolve_instances_applies_config_globals(tmp_path):
+    from vllmstat.cli import resolve_instances
+    from vllmstat.config import Config
+
+    p = tmp_path / "vllmstat.toml"
+    p.write_text(
+        'interval = 2.5\ngpu = false\n[[instance]]\nname = "a"\nurl = "http://localhost:8000"\n'
+    )
+    cfg = Config(config_path=str(p))
+    resolve_instances(cfg, {})
+    assert cfg.interval == 2.5  # config global applied (flag left at default)
+    assert cfg.gpu is False
+    assert len(cfg.instances) == 1 and cfg.instances[0].name == "a"

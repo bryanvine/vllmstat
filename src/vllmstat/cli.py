@@ -19,10 +19,11 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
 
     local_names = local_hostnames()
     config_instances = []
+    config_globals: dict = {}
     path = find_config(cfg.config_path, env)
     if path:
         try:
-            raw, _globals = load_config(path)
+            raw, config_globals = load_config(path)
             config_instances = [
                 instance_from_dict(
                     r,
@@ -34,6 +35,16 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
             ]
         except (OSError, ValueError) as e:
             print(f"vllmstat: ignoring config {path}: {e}", file=sys.stderr)
+    # Config-file global keys fill in for CLI flags left at their default
+    # (an explicitly-passed non-default flag still wins).
+    interval = config_globals.get("interval")
+    if isinstance(interval, bool):  # TOML booleans are not valid intervals
+        interval = None
+    if cfg.interval == 1.0 and isinstance(interval, (int, float)):
+        cfg.interval = float(interval)
+    gpu = config_globals.get("gpu")
+    if cfg.gpu is True and isinstance(gpu, bool):
+        cfg.gpu = gpu
     docker_instances = discover_docker() if cfg.discover_docker else []
     cfg.instances = resolve_fleet(
         config_instances,
