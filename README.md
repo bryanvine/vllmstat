@@ -2,7 +2,7 @@
 
 **`nvtop` for vLLM** — a zero-infrastructure interactive terminal dashboard for vLLM serving performance.
 
-![vllmstat](https://raw.githubusercontent.com/bryanvine/vllmstat/main/docs/screenshot.png)
+![vllmstat](https://raw.githubusercontent.com/bryanvine/vllmstat/main/docs/demo.gif)
 
 ---
 
