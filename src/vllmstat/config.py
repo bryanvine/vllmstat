@@ -21,6 +21,7 @@ class Config:
     discover_docker: bool = False
     instances: list[Instance] = field(default_factory=list)
     logs: str | None = None
+    proxy: str | None = None
 
     @property
     def url(self) -> str:
@@ -42,6 +43,7 @@ class Config:
             "--discover-docker", dest="discover_docker", action="store_true", default=False
         )
         p.add_argument("--logs", dest="logs", default=None)
+        p.add_argument("--proxy", dest="proxy", default=None)
         p.add_argument("--version", action="version", version=f"vllmstat {__version__}")
         return p
 
@@ -61,4 +63,5 @@ class Config:
             config_path=ns.config_path,
             discover_docker=ns.discover_docker,
             logs=ns.logs,
+            proxy=ns.proxy,
         )

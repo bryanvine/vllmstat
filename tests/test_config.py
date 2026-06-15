@@ -45,3 +45,8 @@ def test_config_and_discover_flags():
 def test_logs_flag():
     c = Config.from_sources(["--logs", "docker:vllm-xpu"], {})
     assert c.logs == "docker:vllm-xpu"
+
+
+def test_proxy_flag():
+    c = Config.from_sources(["--proxy", "9000"], {})
+    assert c.proxy == "9000"

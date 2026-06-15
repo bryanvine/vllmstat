@@ -117,3 +117,14 @@ async def test_tee_panel_shows_with_source_and_toggles():
         assert app.query_one("#tee").display is False
         await pilot.press("t")
         assert app.query_one("#tee").display is True
+
+
+@pytest.mark.asyncio
+async def test_proxy_starts_and_shows_tee_panel():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    cfg.proxy = "127.0.0.1:0"  # ephemeral port; no client needed
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert app._proxy is not None
+        assert app.query_one("#tee").display is True

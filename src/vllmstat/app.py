@@ -13,9 +13,11 @@ from vllmstat.core.fleet import Fleet, InstanceRuntime
 from vllmstat.core.history import History
 from vllmstat.core.resolve import derive_name
 from vllmstat.core.state import FleetSnapshot, GpuSnapshot, Instance, Snapshot
+from vllmstat.core.tee import TeeEvent
 from vllmstat.providers.gpu import GpuProvider
 from vllmstat.providers.logsource import LogTailer
 from vllmstat.providers.mock import MockProvider, MockVllmProvider, mock_gpu_snapshot
+from vllmstat.providers.proxy import TeeProxy, aiohttp_available, parse_proxy_addr
 from vllmstat.widgets import Panel
 
 
@@ -77,6 +79,19 @@ class VllmStatApp(App):
         self._in_tick = False
         self.tee_visible = True
         self._tailers: list[LogTailer] = []
+        self._proxy: TeeProxy | None = None
+        self._proxy_desc = ""
+        if cfg.proxy:
+            host, port = parse_proxy_addr(cfg.proxy)
+            rt0 = self.fleet.runtimes[0]
+            self._proxy = TeeProxy(
+                upstream_url=rt0.instance.url,
+                host=host,
+                port=port,
+                on_event=rt0.tee.push,
+                api_key=rt0.instance.api_key,
+            )
+            self._proxy_desc = f"proxy :{port} → {rt0.instance.url}"
 
     def compose(self) -> ComposeResult:
         self.p_overview = Panel(id="overview")
@@ -105,7 +120,7 @@ class VllmStatApp(App):
             yield self.p_tee
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self._apply_mode()
         self.p_tee.display = False
         for rt in self.fleet.runtimes:
@@ -115,10 +130,31 @@ class VllmStatApp(App):
                 self._tailers.append(tailer)
         self._timer = self.set_interval(self.cfg.interval, self.tick)
         self.call_later(self.tick)
+        if self._proxy is not None:
+            rt0 = self.fleet.runtimes[0]
+            if not aiohttp_available():
+                rt0.tee.push(
+                    TeeEvent(
+                        ts=time.time(),
+                        kind="note",
+                        text="proxy needs aiohttp — pip install 'vllmstat[proxy]'",
+                    )
+                )
+                self._proxy = None
+                self._proxy_desc = ""
+            else:
+                try:
+                    await self._proxy.start()
+                except Exception as e:  # noqa: BLE001
+                    rt0.tee.push(TeeEvent(ts=time.time(), kind="note", text=f"proxy failed: {e}"))
+                    self._proxy = None
+                    self._proxy_desc = ""
 
-    def on_unmount(self) -> None:
+    async def on_unmount(self) -> None:
         for tailer in self._tailers:
             tailer.terminate()
+        if self._proxy is not None:
+            await self._proxy.stop()
 
     def _apply_mode(self) -> None:
         self.p_overview.display = self.is_fleet and not self.in_detail
@@ -196,14 +232,15 @@ class VllmStatApp(App):
         self.p_spec.update(spec)
         self.p_gpu.update(render.gpu(snap))
         rt = self.fleet.runtimes[min(self.selected, len(self.fleet.runtimes) - 1)]
-        has_tee = bool(inst.logs) or len(rt.tee) > 0
+        has_tee = bool(inst.logs) or self._proxy is not None or len(rt.tee) > 0
         self.p_tee.display = has_tee and self.tee_visible
         if self.p_tee.display:
+            source = self._proxy_desc or inst.logs or "—"
             self.p_tee.update(
                 render.tee(
                     rt.tee.recent(40),
                     width=self._panel_width(self.p_tee),
-                    source_desc=inst.logs or "proxy",
+                    source_desc=source,
                     height=12,
                 )
             )
