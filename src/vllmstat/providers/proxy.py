@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
+from typing import Any
+
+import httpx
+
+from vllmstat.core.tee import TeeEvent
 
 
 def endpoint_for(path: str) -> str | None:
@@ -99,3 +106,122 @@ def aiohttp_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+_HOP = {
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "keep-alive",
+    "accept-encoding",
+}
+
+
+class TeeProxy:
+    """Streaming reverse-proxy that relays the client<->upstream traffic byte-for-byte
+    while teeing prompts and completions as ``TeeEvent``s (best-effort; never corrupts
+    the relayed bytes)."""
+
+    def __init__(
+        self,
+        *,
+        upstream_url: str,
+        host: str,
+        port: int,
+        on_event: Callable[[TeeEvent], None],
+        api_key: str | None = None,
+    ) -> None:
+        self.upstream_url = upstream_url.rstrip("/")
+        self.host = host
+        self.port = port
+        self._on_event = on_event
+        self._api_key = api_key
+        self._client = httpx.AsyncClient(timeout=None)
+        self._runner: object | None = None
+
+    async def start(self) -> None:
+        from aiohttp import web
+
+        app = web.Application(client_max_size=0)  # unlimited request body
+        app.router.add_route("*", "/{tail:.*}", self._handle)
+        runner = web.AppRunner(app)
+        self._runner = runner
+        await runner.setup()
+        await web.TCPSite(runner, self.host, self.port).start()
+
+    async def stop(self) -> None:
+        from aiohttp import web
+
+        if self._runner is not None:
+            assert isinstance(self._runner, web.AppRunner)
+            await self._runner.cleanup()
+            self._runner = None
+        await self._client.aclose()
+
+    async def _handle(self, request: Any) -> Any:
+        from aiohttp import web
+
+        body = await request.read()
+        path = request.path
+        endpoint = endpoint_for(path)
+        streaming, prompt = False, None
+        if endpoint and body:
+            try:
+                req = json.loads(body)
+                prompt = extract_prompt(path, req)
+                streaming = bool(req.get("stream"))
+            except (ValueError, AttributeError):
+                pass
+        event = None
+        if endpoint:
+            event = TeeEvent(
+                ts=time.time(),
+                kind="exchange",
+                endpoint=endpoint,
+                prompt=prompt,
+                response="",
+                streaming=streaming,
+                done=False,
+            )
+            self._on_event(event)
+
+        fwd = {k: v for k, v in request.headers.items() if k.lower() not in _HOP}
+        fwd["accept-encoding"] = "identity"
+        if self._api_key and not any(k.lower() == "authorization" for k in fwd):
+            fwd["Authorization"] = f"Bearer {self._api_key}"
+
+        try:
+            async with self._client.stream(
+                request.method,
+                self.upstream_url + path,
+                content=body or None,
+                headers=fwd,
+                params=request.query_string or None,
+            ) as up:
+                out_headers = {k: v for k, v in up.headers.items() if k.lower() not in _HOP}
+                resp = web.StreamResponse(status=up.status_code, headers=out_headers)
+                await resp.prepare(request)
+                acc = SSEAccumulator(endpoint) if (endpoint and streaming) else None
+                raw = bytearray()
+                async for chunk in up.aiter_raw():
+                    await resp.write(chunk)
+                    if event is not None:
+                        if acc is not None:
+                            acc.feed(chunk.decode("utf-8", "replace"))
+                            event.response, event.done = acc.text, acc.done
+                        elif not streaming:
+                            raw += chunk
+                await resp.write_eof()
+                if event is not None and endpoint and not streaming:
+                    try:
+                        text, pt, ct = parse_json_content(json.loads(bytes(raw)), endpoint)
+                        event.response, event.prompt_tokens, event.completion_tokens = text, pt, ct
+                    except (ValueError, KeyError, TypeError):
+                        pass
+                    event.done = True
+                return resp
+        except Exception as e:  # noqa: BLE001 - never crash; surface upstream errors
+            if event is not None:
+                event.response, event.done = f"[proxy error: {e}]", True
+            return web.Response(status=502, text=f"vllmstat proxy: {e}")
