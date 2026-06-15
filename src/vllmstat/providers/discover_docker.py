@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 
 from vllmstat.core.resolve import normalize_url
@@ -115,7 +116,8 @@ def discover_docker(
             if isinstance(data, list) and data:
                 inspect_by_id[cid] = data[0]
         return build_instances(rows, inspect_by_id, host_gpu_count=host_gpu_count)
-    except Exception:  # noqa: BLE001 - discovery is best-effort, never crash the app
+    except Exception as e:  # noqa: BLE001 - discovery is best-effort, never crash the app
+        print(f"vllmstat: docker discovery failed: {e}", file=sys.stderr)
         return []
 
 
