@@ -9,14 +9,28 @@ from dataclasses import replace
 from vllmstat.config import Config
 from vllmstat.core.metrics import MetricsEngine
 from vllmstat.core.parse import parse_metrics
+from vllmstat.providers.discover_docker import discover_docker
 from vllmstat.providers.mock import MockProvider
 from vllmstat.snapshot_json import snapshot_to_dict
+
+
+def port_responding(url: str, timeout: float = 0.4) -> bool:
+    import socket
+    from urllib.parse import urlparse
+
+    p = urlparse(url if "://" in url else "http://" + url)
+    host = p.hostname or "localhost"
+    port = p.port or (443 if p.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
     from vllmstat.core.config_file import find_config, load_config
     from vllmstat.core.resolve import instance_from_dict, local_hostnames, resolve_fleet
-    from vllmstat.providers.discover_docker import discover_docker
 
     local_names = local_hostnames()
     config_instances = []
@@ -47,6 +61,17 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
     if cfg.gpu is True and isinstance(gpu, bool):
         cfg.gpu = gpu
     docker_instances = discover_docker() if cfg.discover_docker else []
+    default_url = "http://localhost:8000"
+    if not config_instances and not docker_instances and not cfg.urls and not cfg.mock:
+        if not port_responding(default_url):
+            found = discover_docker()
+            if found:
+                docker_instances = found
+                print(
+                    f"vllmstat: {default_url} not responding — "
+                    f"found {len(found)} vLLM container(s) via Docker",
+                    file=sys.stderr,
+                )
     cfg.instances = resolve_fleet(
         config_instances,
         docker_instances,

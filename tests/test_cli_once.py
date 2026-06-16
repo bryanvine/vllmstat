@@ -70,3 +70,47 @@ def test_resolve_instances_cli_logs_do_not_override_per_instance(tmp_path):
     cfg = Config.from_sources(["--config", str(p), "--logs", "docker:cli-default"], {})
     resolve_instances(cfg, {})
     assert cfg.instances[0].logs == "docker:from-config"
+
+
+def test_auto_discover_skipped_when_default_up(monkeypatch):
+    from vllmstat import cli
+    from vllmstat.config import Config
+
+    monkeypatch.setattr(cli, "port_responding", lambda url, timeout=0.4: True)
+    called = {"n": 0}
+    monkeypatch.setattr(
+        cli,
+        "discover_docker",
+        lambda *a, **k: called.__setitem__("n", called["n"] + 1) or [],
+    )
+    cfg = Config.from_sources([], {})
+    cli.resolve_instances(cfg, {})
+    assert [i.url for i in cfg.instances] == ["http://localhost:8000"]
+    assert called["n"] == 0  # discovery not consulted when default is up
+
+
+def test_auto_discover_used_when_default_down(monkeypatch):
+    from vllmstat import cli
+    from vllmstat.config import Config
+    from vllmstat.core.state import Instance
+
+    monkeypatch.setattr(cli, "port_responding", lambda url, timeout=0.4: False)
+    monkeypatch.setattr(
+        cli,
+        "discover_docker",
+        lambda *a, **k: [Instance(name="c", url="http://localhost:9001", locality="local")],
+    )
+    cfg = Config.from_sources([], {})
+    cli.resolve_instances(cfg, {})
+    assert [i.url for i in cfg.instances] == ["http://localhost:9001"]
+
+
+def test_auto_discover_falls_back_to_default_when_none(monkeypatch):
+    from vllmstat import cli
+    from vllmstat.config import Config
+
+    monkeypatch.setattr(cli, "port_responding", lambda url, timeout=0.4: False)
+    monkeypatch.setattr(cli, "discover_docker", lambda *a, **k: [])
+    cfg = Config.from_sources([], {})
+    cli.resolve_instances(cfg, {})
+    assert [i.url for i in cfg.instances] == ["http://localhost:8000"]
