@@ -110,7 +110,41 @@ def latency(s: Snapshot) -> str:
         + _q("e2e", s.e2e)
         + "\n"
         + _q("queue", s.queue)
+        + "\n"
+        + _q("prefill", s.prefill)
+        + "\n"
+        + _q("decode", s.decode)
     )
+
+
+def request_shape(s: Snapshot) -> str:
+    if s.prompt_len.mean is None and s.gen_len.mean is None:
+        return ""
+
+    def row(label: str, q) -> str:
+        avg = fmt_si(q.mean) if q.mean is not None else "—"
+        p50 = fmt_si(q.p50) if q.p50 is not None else "—"
+        p90 = fmt_si(q.p90) if q.p90 is not None else "—"
+        return f" {label:<7} avg {avg:>5}  p50 {p50:>5}  p90 {p90:>5} tok"
+
+    return "REQUEST SHAPE (recent)\n" + row("prompt", s.prompt_len) + "\n" + row("gen", s.gen_len)
+
+
+def outcomes(s: Snapshot) -> str:
+    if not s.finish_reasons and s.goodput_ttft is None and s.goodput_tpot is None:
+        return ""
+    parts = []
+    if s.finish_reasons:
+        ordered = sorted(s.finish_reasons.items(), key=lambda kv: kv[1], reverse=True)
+        parts.append(" " + " · ".join(f"{k} {fmt_pct(v)}" for k, v in ordered))
+    gp = []
+    if s.goodput_ttft is not None:
+        gp.append(f"TTFT<{fmt_dur(s.ttft_slo_s)} {fmt_pct(s.goodput_ttft)}")
+    if s.goodput_tpot is not None:
+        gp.append(f"TPOT<{fmt_dur(s.tpot_slo_s)} {fmt_pct(s.goodput_tpot)}")
+    if gp:
+        parts.append(" goodput  " + " · ".join(gp))
+    return "OUTCOMES (recent)\n" + "\n".join(parts)
 
 
 def specdecode(s: Snapshot) -> str:
@@ -166,7 +200,9 @@ def detail_header(inst: Instance, s: Snapshot, *, interval: float, uptime: str) 
 
 
 def efficiency(s: Snapshot) -> str:
-    if not s.eff_active:
+    pw = sum(g.power_w for g in s.gpu.gpus if g.power_w)
+    has_tokw = pw > 0 and s.gen_tps > 0
+    if not s.eff_active and not has_tokw:
         return ""
     parts = []
     if s.gflops is not None:
@@ -175,6 +211,9 @@ def efficiency(s: Snapshot) -> str:
         parts.append(f"{s.gbps:.0f} GB/s")
     if s.mfu is not None:
         parts.append(f"MFU {fmt_pct(s.mfu)}")
+    if has_tokw:
+        parts.append(f"{s.gen_tps / pw:.1f} tok/W")
+        parts.append(f"{pw / s.gen_tps:.2f} J/tok")
     return "EFFICIENCY  " + " · ".join(parts) if parts else ""
 
 

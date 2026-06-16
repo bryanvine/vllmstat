@@ -461,3 +461,62 @@ def test_render_tee_marks_errors_and_exchange():
         width=40,
     )
     assert "▶" in ex and "◀" in ex
+
+
+def test_latency_includes_phases():
+    from vllmstat import render
+    from vllmstat.core.state import Quantiles, Snapshot
+
+    s = Snapshot(
+        ts=0.0,
+        connected=True,
+        prefill=Quantiles(p50=0.09, p90=0.26),
+        decode=Quantiles(p50=0.21, p90=0.54),
+    )
+    out = render.latency(s)
+    assert "prefill" in out and "decode" in out
+
+
+def test_request_shape_and_empty():
+    from vllmstat import render
+    from vllmstat.core.state import Quantiles, Snapshot
+
+    assert render.request_shape(Snapshot(ts=0.0, connected=True)) == ""
+    s = Snapshot(
+        ts=0.0,
+        connected=True,
+        prompt_len=Quantiles(p50=1400, p90=6800, mean=2100),
+        gen_len=Quantiles(p50=256, p90=900, mean=320),
+    )
+    out = render.request_shape(s)
+    assert "REQUEST SHAPE" in out and "prompt" in out and "avg" in out and "gen" in out
+
+
+def test_outcomes_and_empty():
+    from vllmstat import render
+    from vllmstat.core.state import Snapshot
+
+    assert render.outcomes(Snapshot(ts=0.0, connected=True)) == ""
+    s = Snapshot(
+        ts=0.0,
+        connected=True,
+        finish_reasons={"stop": 0.92, "length": 0.08},
+        goodput_ttft=0.88,
+        goodput_tpot=0.94,
+    )
+    out = render.outcomes(s)
+    assert "stop" in out and "length" in out and "goodput" in out and "TTFT<" in out
+
+
+def test_efficiency_tokens_per_watt():
+    from vllmstat import render
+    from vllmstat.core.state import GpuSample, GpuSnapshot, Snapshot
+
+    s = Snapshot(
+        ts=0.0,
+        connected=True,
+        gen_tps=1400.0,
+        gpu=GpuSnapshot(available=True, gpus=[GpuSample(index=0, name="x", power_w=238.0)]),
+    )
+    out = render.efficiency(s)
+    assert "tok/W" in out
