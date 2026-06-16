@@ -1,6 +1,6 @@
 import math
 
-from vllmstat.core.histogram import histogram_quantile, windowed_buckets
+from vllmstat.core.histogram import histogram_max_le, histogram_quantile, windowed_buckets
 
 
 def test_quantile_linear_interpolation():
@@ -46,3 +46,15 @@ def test_histogram_fraction_below():
     assert histogram_fraction_below(b, 5.0) == 0.9
     assert histogram_fraction_below([], 1.0) is None
     assert histogram_fraction_below([(1.0, 0.0)], 1.0) is None
+
+
+def test_histogram_max_le():
+    # max falls in the highest populated finite bucket (le=100 first reaches total 5)
+    assert histogram_max_le([(10.0, 2.0), (100.0, 5.0), (float("inf"), 5.0)]) == 100.0
+    # all observations in the lowest bucket -> that bucket's le
+    assert histogram_max_le([(10.0, 5.0), (100.0, 5.0), (float("inf"), 5.0)]) == 10.0
+    # no observations
+    assert histogram_max_le([]) is None
+    assert histogram_max_le([(10.0, 0.0), (float("inf"), 0.0)]) is None
+    # max exceeds every finite bucket (only +Inf reaches the total) -> None
+    assert histogram_max_le([(10.0, 2.0), (100.0, 4.0), (float("inf"), 5.0)]) is None

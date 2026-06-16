@@ -39,7 +39,8 @@ def concurrency(s: Snapshot, h: History, *, width: int | None = None) -> str:
     seqs = f"  max-seqs {s.max_num_seqs}" if s.max_num_seqs else ""
     return (
         f"CONCURRENCY\n"
-        f" running {s.running:.0f} · waiting {s.waiting:.0f} · "
+        f" running {s.running:.0f} (peak {s.peak_running:.0f}) · "
+        f"waiting {s.waiting:.0f} (peak {s.peak_waiting:.0f}) · "
         f"preempt {s.preempt_rate:.1f}/s{seqs}\n"
         f"{_series_plot(h, 'running', width=pw, caption='running')}\n"
         f"{_series_plot(h, 'waiting', width=pw, caption='waiting')}"
@@ -128,6 +129,30 @@ def request_shape(s: Snapshot) -> str:
         return f" {label:<7} avg {avg:>5}  p50 {p50:>5}  p90 {p90:>5} tok"
 
     return "REQUEST SHAPE (recent)\n" + row("prompt", s.prompt_len) + "\n" + row("gen", s.gen_len)
+
+
+def context_window(s: Snapshot) -> str:
+    """Largest single request seen (bucketed, lifetime) → tune --max-model-len.
+
+    `total` is the prompt+output upper bound: the smallest --max-model-len that
+    would still fit every request observed so far. The percentage is that bound
+    against the configured max-model-len, so a low percentage means headroom to
+    shrink the context and reclaim KV cache.
+    """
+    if s.max_prompt_tokens is None and s.max_output_tokens is None:
+        return ""
+    parts = []
+    if s.max_prompt_tokens is not None:
+        parts.append(f"prompt ≤{s.max_prompt_tokens}")
+    if s.max_output_tokens is not None:
+        parts.append(f"output ≤{s.max_output_tokens}")
+    if s.max_prompt_tokens is not None and s.max_output_tokens is not None:
+        total = s.max_prompt_tokens + s.max_output_tokens
+        if s.max_model_len:
+            parts.append(f"total ≤{total} / {s.max_model_len} ({fmt_pct(total / s.max_model_len)})")
+        else:
+            parts.append(f"total ≤{total}")
+    return "MAX CONTEXT (lifetime)  " + " · ".join(parts)
 
 
 def outcomes(s: Snapshot) -> str:

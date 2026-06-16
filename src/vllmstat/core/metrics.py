@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vllmstat.core.histogram import histogram_fraction_below, histogram_quantile, windowed_buckets
+from vllmstat.core.histogram import (
+    histogram_fraction_below,
+    histogram_max_le,
+    histogram_quantile,
+    windowed_buckets,
+)
 from vllmstat.core.kv import compute_kv
 from vllmstat.core.parse import (
     Families,
@@ -72,6 +77,9 @@ class MetricsEngine:
         self._rbytes = Rate(alpha)
         self._wbytes = Rate(alpha)
         self._prev: Families | None = None
+        # Session-peak concurrency (high-water marks since the last reset).
+        self._peak_running = 0.0
+        self._peak_waiting = 0.0
         # Session accumulators (averages while the server is actively serving).
         self._sess_t_prev: float | None = None
         self._sess_active_s = 0.0
@@ -86,6 +94,8 @@ class MetricsEngine:
 
     def reset_session(self) -> None:
         """Clear all session accumulators; the next sample re-baselines."""
+        self._peak_running = 0.0
+        self._peak_waiting = 0.0
         self._sess_t_prev = None
         self._sess_active_s = 0.0
         self._sess_idle_s = 0.0
@@ -228,6 +238,13 @@ class MetricsEngine:
         engines = {lbl.get("engine") for lbl, _ in fam.get("vllm:num_requests_running", [])}
 
         running = sum_value(fam, "vllm:num_requests_running") or 0.0
+        waiting = sum_value(fam, "vllm:num_requests_waiting") or 0.0
+        self._peak_running = max(self._peak_running, running)
+        self._peak_waiting = max(self._peak_waiting, waiting)
+
+        # max context seen (bucketed lifetime maxes; tune --max-model-len)
+        max_prompt = histogram_max_le(get_buckets(fam, _PROMPT_LEN))
+        max_output = histogram_max_le(get_buckets(fam, _GEN_LEN))
 
         # throughput rates
         gen_total = sum_value(fam, "vllm:generation_tokens_total") or 0.0
@@ -306,8 +323,11 @@ class MetricsEngine:
             connected=True,
             model_names=model_names or ([mn] if (mn := labels.get("model_name")) else []),
             engine_count=len([e for e in engines if e is not None]) or 1,
+            max_model_len=self.max_model_len,
             running=running,
-            waiting=sum_value(fam, "vllm:num_requests_waiting") or 0.0,
+            waiting=waiting,
+            peak_running=self._peak_running,
+            peak_waiting=self._peak_waiting,
             preempt_rate=preempt,
             gen_tps=gen,
             prompt_tps=prompt,
@@ -346,6 +366,8 @@ class MetricsEngine:
             decode=self._quantiles(fam, _LAT["decode"]),
             prompt_len=self._hist_stats(fam, _PROMPT_LEN),
             gen_len=self._hist_stats(fam, _GEN_LEN),
+            max_prompt_tokens=int(max_prompt) if max_prompt is not None else None,
+            max_output_tokens=int(max_output) if max_output is not None else None,
             finish_reasons=self._finish_reasons(fam),
             goodput_ttft=histogram_fraction_below(
                 self._window_buckets(fam, _LAT["ttft"]), self.ttft_slo_s

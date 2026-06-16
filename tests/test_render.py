@@ -73,6 +73,14 @@ def test_concurrency_panel_shows_counts_and_braille_plot():
     assert "waiting" in text
 
 
+def test_concurrency_panel_shows_peak_high_water_mark():
+    text = render.concurrency(
+        _snap(running=2.0, waiting=1.0, peak_running=8.0, peak_waiting=3.0), History(), width=40
+    )
+    assert "running 2 (peak 8)" in text
+    assert "waiting 1 (peak 3)" in text
+
+
 def test_timeseries_panels_no_braille_when_empty_history():
     # No samples yet -> braille rows are blank; must not raise.
     text_t = render.throughput(_snap(), History(), width=40)
@@ -490,6 +498,25 @@ def test_request_shape_and_empty():
     )
     out = render.request_shape(s)
     assert "REQUEST SHAPE" in out and "prompt" in out and "avg" in out and "gen" in out
+
+
+def test_context_window_full_with_headroom():
+    s = _snap(max_prompt_tokens=4096, max_output_tokens=512, max_model_len=32768)
+    out = render.context_window(s)
+    assert "MAX CONTEXT" in out
+    assert "prompt ≤4096" in out and "output ≤512" in out
+    assert "total ≤4608" in out  # prompt + output upper bound
+    assert "32768" in out and "14.1%" in out  # headroom vs configured max-model-len
+
+
+def test_context_window_no_max_model_len_omits_headroom():
+    out = render.context_window(_snap(max_prompt_tokens=4096, max_output_tokens=512))
+    assert "total ≤4608" in out
+    assert "%" not in out  # no configured cap -> no headroom percentage
+
+
+def test_context_window_empty_when_no_data():
+    assert render.context_window(_snap(max_prompt_tokens=None, max_output_tokens=None)) == ""
 
 
 def test_outcomes_and_empty():

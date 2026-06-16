@@ -95,12 +95,13 @@ vllmstat --once --json
 
 ## What it shows
 
-- **Concurrency** — running requests, waiting queue depth, preemption rate, with mini sparklines.
+- **Concurrency** — running requests and waiting queue depth (each with its session-**peak** high-water mark, so you can size `--max-num-seqs` and decide whether you're batch-bound or queue-bound), preemption rate, with mini sparklines.
 - **Throughput** — generation tok/s, prompt tok/s, tokens per iteration, requests per second.
 - **Session (while serving)** — running averages accumulated only while the server is actively serving (i.e. requests in flight, so idle gaps don't dilute the numbers): average decode and prefill/pp tok/s, the busy/idle split with the fraction of time spent serving, total requests completed, average generated tokens per request, and cumulative generated/prompt token totals. Press `r` to reset these counters at any time.
 - **Cache & KV memory** — prefix-cache hit rate (windowed and lifetime), token-source breakdown (compute vs. cache-hit vs. external KV transfer), KV-cache utilisation percentage, KV-cache capacity in tokens, and — when a quantised KV dtype is detected — the dtype (`fp8_e4m3`, `turboquant_k3v4_nc`, …), effective compression ratio vs. fp16, and how much fp16 memory the model's full context would require. For example, a `turboquant k3v4` cache shows ~4.6× compression and a note that the full context would need 25.8 GB in fp16.
 - **Latency percentiles** — TTFT, TPOT, end-to-end, and queue-wait time, each at p50 / p90 / p99, computed over a rolling window so recent spikes are visible immediately — plus the **per-phase breakdown** (queue → prefill → decode) so you can see *where* end-to-end latency is spent.
 - **Request shape** — prompt-length and generation-length distributions (avg / p50 / p90 token counts), so you can see the workload at a glance: long-context vs. long-generation.
+- **Max context (lifetime)** — the largest single request the server has seen, as bucketed prompt-token and output-token maxima. Their sum is the smallest `--max-model-len` that would still fit every request observed, shown as a percentage of your configured context window — so a low percentage means headroom to shrink the context and reclaim KV cache. (Bucketed upper bounds; hidden until the first request completes.)
 - **Outcomes & goodput** — finish-reason breakdown (stop vs. length-truncated vs. abort/error) and the fraction of requests meeting an SLO (defaults: TTFT < 1 s, TPOT < 50 ms).
 - **Efficiency** — model FLOP/s, memory bandwidth, MFU, and **energy efficiency** (tokens per watt and joules per token, derived from live throughput ÷ GPU power draw) plus the **average idle power** the GPU draws while not serving. Per-token figures show only while actually generating.
 - **Speculative decoding** — acceptance rate, accepted tokens per draft, per-position acceptance (when the server reports it). The panel is hidden when spec-decode is not active.

@@ -59,7 +59,7 @@ def test_latency_quantiles_computed():
 # --- session averages (accumulated while serving) -----------------------------
 
 
-def _fam(*, gen: float, prompt: float, req: float, running: float):
+def _fam(*, gen: float, prompt: float, req: float, running: float, waiting: float = 0.0):
     """Minimal synthetic Families with just the session-relevant counters."""
     e = {"engine": "0", "model_name": "m"}
     return {
@@ -67,6 +67,7 @@ def _fam(*, gen: float, prompt: float, req: float, running: float):
         "vllm:prompt_tokens_total": [(e, prompt)],
         "vllm:request_success_total": [(e, req)],
         "vllm:num_requests_running": [(e, running)],
+        "vllm:num_requests_waiting": [(e, waiting)],
     }
 
 
@@ -122,6 +123,56 @@ def test_session_reset_zeroes_accumulators():
     assert s2.session_requests == 0
     assert s2.session_gen_tokens == 0.0
     assert s2.avg_gen_tokens_per_req is None
+
+
+def test_peak_concurrency_tracks_high_water_mark():
+    eng = MetricsEngine()
+    s0 = eng.derive(_fam(gen=0.0, prompt=0.0, req=0.0, running=3.0, waiting=2.0), now=0.0)
+    assert s0.peak_running == 3.0 and s0.peak_waiting == 2.0
+    # running drops, waiting spikes: each peak is an independent high-water mark
+    s1 = eng.derive(_fam(gen=0.0, prompt=0.0, req=0.0, running=1.0, waiting=5.0), now=1.0)
+    assert s1.running == 1.0 and s1.peak_running == 3.0  # peak held
+    assert s1.waiting == 5.0 and s1.peak_waiting == 5.0  # new high
+    # both fall: peaks unchanged
+    s2 = eng.derive(_fam(gen=0.0, prompt=0.0, req=0.0, running=0.0, waiting=0.0), now=2.0)
+    assert s2.peak_running == 3.0 and s2.peak_waiting == 5.0
+
+
+def test_peak_concurrency_reset_clears_high_water_marks():
+    eng = MetricsEngine()
+    eng.derive(_fam(gen=0.0, prompt=0.0, req=0.0, running=4.0, waiting=3.0), now=0.0)
+    eng.reset_session()
+    s = eng.derive(_fam(gen=0.0, prompt=0.0, req=0.0, running=1.0, waiting=0.0), now=1.0)
+    assert s.peak_running == 1.0 and s.peak_waiting == 0.0
+
+
+_MAXCTX = """\
+# HELP vllm:request_prompt_tokens Prompt token counts
+# TYPE vllm:request_prompt_tokens histogram
+vllm:request_prompt_tokens_bucket{le="512"} 2.0
+vllm:request_prompt_tokens_bucket{le="1024"} 4.0
+vllm:request_prompt_tokens_bucket{le="2048"} 4.0
+vllm:request_prompt_tokens_bucket{le="+Inf"} 4.0
+vllm:request_prompt_tokens_count 4.0
+vllm:request_prompt_tokens_sum 2500.0
+# HELP vllm:request_generation_tokens Generation token counts
+# TYPE vllm:request_generation_tokens histogram
+vllm:request_generation_tokens_bucket{le="128"} 3.0
+vllm:request_generation_tokens_bucket{le="256"} 6.0
+vllm:request_generation_tokens_bucket{le="512"} 6.0
+vllm:request_generation_tokens_bucket{le="+Inf"} 6.0
+vllm:request_generation_tokens_count 6.0
+vllm:request_generation_tokens_sum 900.0
+"""
+
+
+def test_max_context_from_lifetime_histograms():
+    eng = MetricsEngine(max_model_len=8192)
+    s = eng.derive(parse_metrics(_MAXCTX), now=0.0)
+    # bucketed max = highest populated finite bucket boundary
+    assert s.max_prompt_tokens == 1024  # le=1024 first reaches total 4
+    assert s.max_output_tokens == 256  # le=256 first reaches total 6
+    assert s.max_model_len == 8192  # propagated for the headroom %
 
 
 def test_session_rebaselines_on_counter_reset():

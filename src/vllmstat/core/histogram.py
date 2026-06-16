@@ -49,6 +49,28 @@ def histogram_fraction_below(buckets: list[tuple[float, float]], threshold: floa
     return 1.0
 
 
+def histogram_max_le(buckets: list[tuple[float, float]]) -> float | None:
+    """Upper bound on the largest observed value from cumulative buckets.
+
+    `buckets` are cumulative [(le, cum_count), ...] sorted ascending, ending in a
+    `+Inf` bucket (Prometheus style). Returns the smallest *finite* `le` whose
+    cumulative count reaches the total — the bucket the maximum falls in, so the
+    true max is `<= le`. Returns None when there are no observations, or when the
+    maximum exceeds every finite boundary (only the `+Inf` bucket reaches total).
+    """
+    if not buckets:
+        return None
+    total = buckets[-1][1]
+    if total <= 0:
+        return None
+    for le, count in buckets:
+        if le == float("inf"):
+            return None  # max exceeds the largest finite bucket
+        if count >= total:
+            return le
+    return None
+
+
 def windowed_buckets(
     prev: list[tuple[float, float]], cur: list[tuple[float, float]]
 ) -> list[tuple[float, float]]:

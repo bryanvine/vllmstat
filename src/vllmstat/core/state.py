@@ -62,9 +62,12 @@ class Snapshot:
     model_names: list[str] = field(default_factory=list)
     engine_count: int = 0
     max_num_seqs: int | None = None
+    max_model_len: int | None = None
     # concurrency
     running: float = 0.0
     waiting: float = 0.0
+    peak_running: float = 0.0  # session-peak num_requests_running
+    peak_waiting: float = 0.0  # session-peak num_requests_waiting
     preempt_rate: float = 0.0
     # throughput
     gen_tps: float = 0.0
@@ -110,6 +113,9 @@ class Snapshot:
     # request shape (token counts; .mean = average)
     prompt_len: Quantiles = field(default_factory=Quantiles)
     gen_len: Quantiles = field(default_factory=Quantiles)
+    # max context (bucketed lifetime maxes; for tuning --max-model-len)
+    max_prompt_tokens: int | None = None
+    max_output_tokens: int | None = None
     # outcomes
     finish_reasons: dict[str, float] = field(default_factory=dict)
     goodput_ttft: float | None = None
