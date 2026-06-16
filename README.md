@@ -99,7 +99,10 @@ vllmstat --once --json
 - **Throughput** — generation tok/s, prompt tok/s, tokens per iteration, requests per second.
 - **Session (while serving)** — running averages accumulated only while the server is actively serving (i.e. requests in flight, so idle gaps don't dilute the numbers): average decode and prefill/pp tok/s, the busy/idle split with the fraction of time spent serving, total requests completed, average generated tokens per request, and cumulative generated/prompt token totals. Press `r` to reset these counters at any time.
 - **Cache & KV memory** — prefix-cache hit rate (windowed and lifetime), token-source breakdown (compute vs. cache-hit vs. external KV transfer), KV-cache utilisation percentage, KV-cache capacity in tokens, and — when a quantised KV dtype is detected — the dtype (`fp8_e4m3`, `turboquant_k3v4_nc`, …), effective compression ratio vs. fp16, and how much fp16 memory the model's full context would require. For example, a `turboquant k3v4` cache shows ~4.6× compression and a note that the full context would need 25.8 GB in fp16.
-- **Latency percentiles** — TTFT, TPOT, end-to-end, and queue-wait time, each at p50 / p90 / p99, computed over a rolling window so recent spikes are visible immediately.
+- **Latency percentiles** — TTFT, TPOT, end-to-end, and queue-wait time, each at p50 / p90 / p99, computed over a rolling window so recent spikes are visible immediately — plus the **per-phase breakdown** (queue → prefill → decode) so you can see *where* end-to-end latency is spent.
+- **Request shape** — prompt-length and generation-length distributions (avg / p50 / p90 token counts), so you can see the workload at a glance: long-context vs. long-generation.
+- **Outcomes & goodput** — finish-reason breakdown (stop vs. length-truncated vs. abort/error) and the fraction of requests meeting an SLO (defaults: TTFT < 1 s, TPOT < 50 ms).
+- **Efficiency** — model FLOP/s, memory bandwidth, MFU, and **energy efficiency** (tokens per watt and joules per token, derived from live throughput ÷ GPU power draw).
 - **Speculative decoding** — acceptance rate, accepted tokens per draft, per-position acceptance (when the server reports it). The panel is hidden when spec-decode is not active.
 - **Per-GPU stats** — utilisation %, VRAM used / total, temperature, power draw vs. limit, clocks, fan. Works on NVIDIA, AMD, and Intel GPUs (see [GPU support](#gpu-support) for what each vendor reports). Multi-GPU and mixed-vendor hosts show every GPU.
 - **Fleet / multi-instance** — monitor many vLLM servers at once (local Docker containers and/or remote hosts) from one nvtop-style overview, and drill into any instance's full dashboard. See [Fleet monitoring](#fleet--multi-instance-monitoring).
@@ -155,6 +158,8 @@ vllmstat --discover-docker
 ```
 
 It looks for containers whose image or command mentions `vllm`. If Docker isn't installed or reachable, discovery is silently skipped — it never crashes the dashboard.
+
+**Zero-config auto-discovery:** if you just run `vllmstat` with no arguments and nothing is listening on the default `localhost:8000`, it automatically falls back to Docker discovery and monitors whatever vLLM containers it finds (so a containerised vLLM on some other port just works). Pass any explicit `--url`/`--config`/`--discover-docker` and this fallback is skipped.
 
 ### Local vs. remote
 
