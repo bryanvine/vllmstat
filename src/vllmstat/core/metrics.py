@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from vllmstat.core.histogram import histogram_quantile, windowed_buckets
+from vllmstat.core.histogram import histogram_fraction_below, histogram_quantile, windowed_buckets
 from vllmstat.core.kv import compute_kv
 from vllmstat.core.parse import (
     Families,
     first_value,
     get_buckets,
+    hist_count,
+    hist_sum,
     info_labels,
     sum_value,
 )
@@ -19,7 +21,13 @@ _LAT = {
     "tpot": "vllm:request_time_per_output_token_seconds",
     "e2e": "vllm:e2e_request_latency_seconds",
     "queue": "vllm:request_queue_time_seconds",
+    "prefill": "vllm:request_prefill_time_seconds",
+    "decode": "vllm:request_decode_time_seconds",
 }
+
+_PROMPT_LEN = "vllm:request_prompt_tokens"
+_GEN_LEN = "vllm:request_generation_tokens"
+_SUCCESS = "vllm:request_success_total"
 
 
 def _int(s: str | None) -> int | None:
@@ -49,7 +57,11 @@ class MetricsEngine:
         alpha: float = 0.3,
         dims: dict[str, int] | None = None,
         max_model_len: int | None = None,
+        ttft_slo_s: float = 1.0,
+        tpot_slo_s: float = 0.05,
     ) -> None:
+        self.ttft_slo_s = ttft_slo_s
+        self.tpot_slo_s = tpot_slo_s
         self.dims = dims
         self.max_model_len = max_model_len
         self._gen = Rate(alpha)
@@ -160,22 +172,52 @@ class MetricsEngine:
             avg_gen_tokens_per_req=(gen_tokens / requests) if requests > 0 else None,
         )
 
-    def _quantiles(self, fam: Families, base: str) -> Quantiles:
+    def _window_buckets(self, fam: Families, base: str) -> list[tuple[float, float]]:
         cur = get_buckets(fam, base)
         if not cur:
-            return Quantiles()
-        buckets = cur
+            return []
         if self._prev is not None:
             prev = get_buckets(self._prev, base)
             if prev:
                 delta = windowed_buckets(prev, cur)
                 if delta and delta[-1][1] > 0:
-                    buckets = delta
+                    return delta
+        return cur
+
+    def _quantiles(self, fam: Families, base: str) -> Quantiles:
+        buckets = self._window_buckets(fam, base)
+        if not buckets:
+            return Quantiles()
         return Quantiles(
             p50=histogram_quantile(buckets, 0.50),
             p90=histogram_quantile(buckets, 0.90),
             p99=histogram_quantile(buckets, 0.99),
         )
+
+    def _hist_stats(self, fam: Families, base: str) -> Quantiles:
+        q = self._quantiles(fam, base)
+        cnt, s = hist_count(fam, base), hist_sum(fam, base)
+        mean: float | None = None
+        if self._prev is not None and cnt is not None and s is not None:
+            pc, ps = hist_count(self._prev, base), hist_sum(self._prev, base)
+            if pc is not None and ps is not None and cnt > pc:
+                mean = (s - ps) / (cnt - pc)
+        if mean is None and cnt and s is not None and cnt > 0:
+            mean = s / cnt
+        return Quantiles(p50=q.p50, p90=q.p90, p99=q.p99, mean=mean)
+
+    def _finish_reasons(self, fam: Families) -> dict[str, float]:
+        cur = {lbl.get("finished_reason", "?"): v for lbl, v in fam.get(_SUCCESS, [])}
+        if not cur:
+            return {}
+        base = cur
+        if self._prev is not None:
+            prev = {lbl.get("finished_reason", "?"): v for lbl, v in self._prev.get(_SUCCESS, [])}
+            delta = {k: max(0.0, cur.get(k, 0.0) - prev.get(k, 0.0)) for k in cur}
+            if sum(delta.values()) > 0:
+                base = delta
+        total = sum(base.values())
+        return {k: v / total for k, v in base.items()} if total > 0 else {}
 
     def derive(self, fam: Families, now: float) -> Snapshot:
         labels = info_labels(fam, "vllm:cache_config_info")
@@ -300,6 +342,19 @@ class MetricsEngine:
             tpot=self._quantiles(fam, _LAT["tpot"]),
             e2e=self._quantiles(fam, _LAT["e2e"]),
             queue=self._quantiles(fam, _LAT["queue"]),
+            prefill=self._quantiles(fam, _LAT["prefill"]),
+            decode=self._quantiles(fam, _LAT["decode"]),
+            prompt_len=self._hist_stats(fam, _PROMPT_LEN),
+            gen_len=self._hist_stats(fam, _GEN_LEN),
+            finish_reasons=self._finish_reasons(fam),
+            goodput_ttft=histogram_fraction_below(
+                self._window_buckets(fam, _LAT["ttft"]), self.ttft_slo_s
+            ),
+            goodput_tpot=histogram_fraction_below(
+                self._window_buckets(fam, _LAT["tpot"]), self.tpot_slo_s
+            ),
+            ttft_slo_s=self.ttft_slo_s,
+            tpot_slo_s=self.tpot_slo_s,
             spec_active=spec_active,
             spec_acceptance=spec_acceptance,
             spec_accepted_per_draft=spec_per_draft,
