@@ -62,7 +62,13 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
         cfg.gpu = gpu
     docker_instances = discover_docker() if cfg.discover_docker else []
     default_url = "http://localhost:8000"
-    if not config_instances and not docker_instances and not cfg.urls and not cfg.mock:
+    if (
+        not config_instances
+        and not docker_instances
+        and not cfg.urls
+        and not cfg.mock
+        and not cfg.discover_docker  # explicit discovery already ran above; don't re-probe
+    ):
         if not port_responding(default_url):
             found = discover_docker()
             if found:
