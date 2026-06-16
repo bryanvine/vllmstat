@@ -42,6 +42,21 @@ def _int(s: str | None) -> int | None:
         return None
 
 
+def _float(s: str | None) -> float | None:
+    try:
+        return float(s) if s not in (None, "None", "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _bool(s: str | None) -> bool | None:
+    if s == "True":
+        return True
+    if s == "False":
+        return False
+    return None
+
+
 @dataclass(frozen=True)
 class _SessionStats:
     active_s: float = 0.0
@@ -324,6 +339,8 @@ class MetricsEngine:
             model_names=model_names or ([mn] if (mn := labels.get("model_name")) else []),
             engine_count=len([e for e in engines if e is not None]) or 1,
             max_model_len=self.max_model_len,
+            gpu_memory_utilization=_float(labels.get("gpu_memory_utilization")),
+            prefix_caching_enabled=_bool(labels.get("enable_prefix_caching")),
             running=running,
             waiting=waiting,
             peak_running=self._peak_running,

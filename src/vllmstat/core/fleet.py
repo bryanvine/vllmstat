@@ -11,6 +11,11 @@ from vllmstat.core.tee import TeeBuffer
 from vllmstat.model_dims import load_model_dims
 from vllmstat.providers.vllm import VllmProvider
 
+# Generation rate (tok/s) above which the server counts as "actively generating".
+# Below it, gen_tps is just an EWMA residual after inference stops, so per-token
+# energy figures would be meaningless — efficiency is held, not recomputed.
+_EFF_MIN_TPS = 1.0
+
 
 def slice_gpu(host: GpuSnapshot, gpus: tuple[int, ...]) -> GpuSnapshot:
     """Return a GpuSnapshot restricted to the GPU indices a local instance uses.
@@ -46,6 +51,9 @@ class InstanceRuntime:
         self._dims_loaded = False
         self._idle_w_sum = 0.0
         self._idle_w_n = 0
+        self._eff_tokw_sum = 0.0
+        self._eff_jpt_sum = 0.0
+        self._eff_n = 0
 
     async def _ensure_dims(self) -> None:
         if self._dims_loaded:
@@ -86,10 +94,31 @@ class InstanceRuntime:
             self._idle_w_n += 1
         return (self._idle_w_sum / self._idle_w_n) if self._idle_w_n else None
 
+    def record_efficiency(
+        self, gen_tps: float, power_w: float | None
+    ) -> tuple[float | None, float | None]:
+        """Accumulate session-mean tokens/W and J/token while actively generating.
+
+        Samples count only while ``gen_tps >= _EFF_MIN_TPS`` and power is known, so
+        the averages stop updating (but stay shown) once the server goes idle —
+        rather than decaying toward an EWMA residual or dividing by ~0. Returns the
+        current means, or ``(None, None)`` until the first active sample.
+        """
+        if power_w and gen_tps >= _EFF_MIN_TPS:
+            self._eff_tokw_sum += gen_tps / power_w
+            self._eff_jpt_sum += power_w / gen_tps
+            self._eff_n += 1
+        if self._eff_n == 0:
+            return None, None
+        return self._eff_tokw_sum / self._eff_n, self._eff_jpt_sum / self._eff_n
+
     def reset_session(self) -> None:
         self._engine.reset_session()
         self._idle_w_sum = 0.0
         self._idle_w_n = 0
+        self._eff_tokw_sum = 0.0
+        self._eff_jpt_sum = 0.0
+        self._eff_n = 0
 
     async def aclose(self) -> None:
         await self._provider.aclose()
@@ -127,6 +156,7 @@ class Fleet:
                 res.gpu = GpuSnapshot(available=False, source="remote")
             pw = sum(g.power_w for g in res.gpu.gpus if g.power_w) or None
             res.idle_watts_avg = rt.record_idle_power(res.running, pw)
+            res.tokens_per_watt, res.joules_per_token = rt.record_efficiency(res.gen_tps, pw)
             items.append((rt.instance, res))
         return FleetSnapshot(ts=now, items=items, gpu=host_gpu)
 

@@ -63,6 +63,9 @@ class Snapshot:
     engine_count: int = 0
     max_num_seqs: int | None = None
     max_model_len: int | None = None
+    # server config (from vllm:cache_config_info) — for the config advisor
+    gpu_memory_utilization: float | None = None
+    prefix_caching_enabled: bool | None = None
     # concurrency
     running: float = 0.0
     waiting: float = 0.0
@@ -134,5 +137,9 @@ class Snapshot:
     mfu: float | None = None
     bw_util: float | None = None
     idle_watts_avg: float | None = None  # mean GPU power while idle (running == 0)
+    # energy efficiency: session means accumulated only while actively generating, so they
+    # persist (frozen) when the server goes idle instead of decaying or blowing up.
+    tokens_per_watt: float | None = None
+    joules_per_token: float | None = None
     # gpu
     gpu: GpuSnapshot = field(default_factory=GpuSnapshot)

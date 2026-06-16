@@ -124,6 +124,21 @@ def test_specdecode_hidden_when_inactive():
     assert render.specdecode(_snap(spec_active=False)) == ""
 
 
+def test_advisor_renders_markers_and_empty():
+    from vllmstat.core.advisor import Issue
+
+    assert render.advisor([]) == ""  # all clear -> hidden
+    out = render.advisor(
+        [
+            Issue("error", "kv_preemption", "KV cache exhausted — 2.3 preemptions/s."),
+            Issue("warn", "prefix_caching_off", "Prefix caching is disabled."),
+        ]
+    )
+    assert "CONFIG ADVISOR" in out
+    assert "✖" in out and "⚠" in out
+    assert "KV cache exhausted" in out and "Prefix caching is disabled" in out
+
+
 def test_session_panel_shows_decode_prefill_active():
     s = _snap(
         avg_decode_tps=142.0,
@@ -535,34 +550,40 @@ def test_outcomes_and_empty():
     assert "stop" in out and "length" in out and "goodput" in out and "TTFT<" in out
 
 
-def test_efficiency_tokens_per_watt():
+def test_efficiency_shows_session_averages():
     from vllmstat import render
-    from vllmstat.core.state import GpuSample, GpuSnapshot, Snapshot
+    from vllmstat.core.state import Snapshot
 
-    s = Snapshot(
-        ts=0.0,
-        connected=True,
-        gen_tps=1400.0,
-        gpu=GpuSnapshot(available=True, gpus=[GpuSample(index=0, name="x", power_w=238.0)]),
+    out = render.efficiency(
+        Snapshot(ts=0.0, connected=True, tokens_per_watt=5.9, joules_per_token=0.17)
     )
-    out = render.efficiency(s)
-    assert "tok/W" in out
+    assert "5.9 tok/W" in out and "0.17 J/tok" in out
 
 
-def test_efficiency_hides_tokw_when_idle():
-    # Regression: after inference stops, gen_tps decays toward 0 (EWMA residual); J/tok =
-    # power / gen_tps must NOT blow up — tok/W and J/tok are hidden below ~1 tok/s.
+def test_efficiency_holds_average_when_idle():
+    # The held session means stay visible (frozen) when the server goes idle: gen_tps has
+    # decayed to an EWMA residual, but tok/W and J/tok must NOT recompute (no blowup) or vanish.
     from vllmstat import render
-    from vllmstat.core.state import GpuSample, GpuSnapshot, Snapshot
+    from vllmstat.core.state import Snapshot
 
     s = Snapshot(
         ts=0.0,
         connected=True,
         gen_tps=0.002,  # idle residual
-        gpu=GpuSnapshot(available=True, gpus=[GpuSample(index=0, name="x", power_w=32.0)]),
+        eff_active=False,
+        tokens_per_watt=6.0,
+        joules_per_token=0.17,
     )
     out = render.efficiency(s)
-    assert "tok/W" not in out and "J/tok" not in out
+    assert "6.0 tok/W" in out and "0.17 J/tok" in out  # shown, frozen at the session mean
+
+
+def test_efficiency_hidden_when_no_average_yet():
+    # No active sample recorded yet and nothing else to show -> panel stays empty.
+    from vllmstat import render
+    from vllmstat.core.state import Snapshot
+
+    assert render.efficiency(Snapshot(ts=0.0, connected=True, gen_tps=0.002)) == ""
 
 
 def test_efficiency_shows_idle_watts():

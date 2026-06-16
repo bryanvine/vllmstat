@@ -9,6 +9,7 @@ from textual.widgets import Footer
 
 from vllmstat import render
 from vllmstat.config import Config
+from vllmstat.core.advisor import detect_issues
 from vllmstat.core.fleet import Fleet, InstanceRuntime
 from vllmstat.core.history import History
 from vllmstat.core.resolve import derive_name
@@ -107,6 +108,7 @@ class VllmStatApp(App):
         self.p_outcomes = Panel(id="outcomes")
         self.p_eff = Panel(id="eff")
         self.p_spec = Panel(id="spec")
+        self.p_advisor = Panel(id="advisor")
         self.p_gpu = Panel(id="gpu")
         self.p_tee = Panel(id="tee")
         with Vertical(id="detail"):
@@ -122,6 +124,7 @@ class VllmStatApp(App):
             yield self.p_outcomes
             yield self.p_eff
             yield self.p_spec
+            yield self.p_advisor
             yield self.p_gpu
             yield self.p_tee
         yield Footer()
@@ -246,6 +249,9 @@ class VllmStatApp(App):
         spec = render.specdecode(snap)
         self.p_spec.display = bool(spec)
         self.p_spec.update(spec)
+        advisor = render.advisor(detect_issues(snap))
+        self.p_advisor.display = bool(advisor)
+        self.p_advisor.update(advisor)
         self.p_gpu.update(render.gpu(snap))
         rt = self.fleet.runtimes[min(self.selected, len(self.fleet.runtimes) - 1)]
         has_tee = bool(inst.logs) or self._proxy is not None or len(rt.tee) > 0

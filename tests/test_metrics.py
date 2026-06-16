@@ -322,6 +322,18 @@ def test_v06_engine_slo_params_propagated():
     assert snap.tpot_slo_s == 0.02
 
 
+def test_config_labels_parsed_for_advisor():
+    text = (
+        "# TYPE vllm:cache_config_info gauge\n"
+        'vllm:cache_config_info{gpu_memory_utilization="0.7",'
+        'enable_prefix_caching="False",block_size="16"} 1.0\n'
+    )
+    eng = MetricsEngine()
+    s = eng.derive(parse_metrics(text), now=0.0)
+    assert s.gpu_memory_utilization == 0.7
+    assert s.prefix_caching_enabled is False
+
+
 def test_v06_finish_reasons_empty_when_no_success_metric():
     """Engine returns empty dict when vllm:request_success_total is absent."""
     eng = MetricsEngine()

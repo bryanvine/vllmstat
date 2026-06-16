@@ -127,3 +127,17 @@ def test_runtime_idle_power_average():
     assert rt.record_idle_power(0.0, 34.0) == 32.0  # mean of idle samples (30+34)/2
     rt.reset_session()
     assert rt.record_idle_power(5.0, 200.0) is None  # reset cleared the accumulator
+
+
+def test_runtime_efficiency_average_holds_when_idle():
+    rt = InstanceRuntime(Instance("a", "http://x"))
+    # active: 1400 tok/s @ 200 W -> 7.0 tok/W
+    tokw, jpt = rt.record_efficiency(1400.0, 200.0)
+    assert abs(tokw - 7.0) < 1e-9 and abs(jpt - 200.0 / 1400.0) < 1e-9
+    # idle sample (gen_tps below the floor) is ignored -> averages held, not recomputed
+    assert rt.record_efficiency(0.01, 200.0) == (tokw, jpt)
+    # another active sample at 1000 tok/s @ 200 W -> 5.0 tok/W; session mean (7+5)/2 = 6.0
+    tokw3, _ = rt.record_efficiency(1000.0, 200.0)
+    assert abs(tokw3 - 6.0) < 1e-9
+    rt.reset_session()
+    assert rt.record_efficiency(0.01, 200.0) == (None, None)  # reset + idle -> no data yet

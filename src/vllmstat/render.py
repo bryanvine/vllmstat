@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+from vllmstat.core.advisor import Issue
 from vllmstat.core.history import History
 from vllmstat.core.state import FleetSnapshot, Instance, Snapshot
 from vllmstat.core.tee import TeeEvent
@@ -179,6 +180,17 @@ def specdecode(s: Snapshot) -> str:
     return f"SPEC DECODE  acceptance {fmt_pct(s.spec_acceptance)}  accepted/draft {apd}"
 
 
+def advisor(issues: list[Issue]) -> str:
+    """A boxed list of detected misconfigurations. Empty string when all clear."""
+    if not issues:
+        return ""
+    lines = ["CONFIG ADVISOR"]
+    for it in issues:
+        mark = "✖" if it.severity == "error" else "⚠"
+        lines.append(f" {mark} {it.message}")
+    return "\n".join(lines)
+
+
 def _gpu_cell(s: Snapshot, inst: Instance) -> str:
     if inst.locality == "remote":
         return "(remote)"
@@ -225,13 +237,12 @@ def detail_header(inst: Instance, s: Snapshot, *, interval: float, uptime: str) 
 
 
 def efficiency(s: Snapshot) -> str:
-    pw = sum(g.power_w for g in s.gpu.gpus if g.power_w)
-    # Per-token energy is only meaningful while actually generating. Below ~1 tok/s the
-    # server is effectively idle (gen_tps is just an EWMA residual after inference stops),
-    # and J/tok = power / gen_tps would explode toward infinity — so hide it.
-    has_tokw = pw > 0 and s.gen_tps >= 1.0
+    # tok/W and J/tok are session means accumulated only while actively generating
+    # (see InstanceRuntime.record_efficiency). They stay shown — frozen — when the
+    # server is idle, instead of decaying toward an EWMA residual or blowing up.
+    has_eff = s.tokens_per_watt is not None
     has_idle = s.idle_watts_avg is not None
-    if not s.eff_active and not has_tokw and not has_idle:
+    if not s.eff_active and not has_eff and not has_idle:
         return ""
     parts = []
     if s.gflops is not None:
@@ -240,9 +251,9 @@ def efficiency(s: Snapshot) -> str:
         parts.append(f"{s.gbps:.0f} GB/s")
     if s.mfu is not None:
         parts.append(f"MFU {fmt_pct(s.mfu)}")
-    if has_tokw:
-        parts.append(f"{s.gen_tps / pw:.1f} tok/W")
-        parts.append(f"{pw / s.gen_tps:.2f} J/tok")
+    if has_eff:
+        parts.append(f"{s.tokens_per_watt:.1f} tok/W")
+        parts.append(f"{s.joules_per_token:.2f} J/tok")
     if has_idle:
         parts.append(f"idle {s.idle_watts_avg:.0f} W")
     return "EFFICIENCY  " + " · ".join(parts) if parts else ""
