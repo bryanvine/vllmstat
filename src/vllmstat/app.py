@@ -101,7 +101,9 @@ class VllmStatApp(App):
         self.p_tput = Panel(id="tput")
         self.p_lat = Panel(id="lat")
         self.p_cache = Panel(id="cache")
+        self.p_shape = Panel(id="shape")
         self.p_session = Panel(id="session")
+        self.p_outcomes = Panel(id="outcomes")
         self.p_eff = Panel(id="eff")
         self.p_spec = Panel(id="spec")
         self.p_gpu = Panel(id="gpu")
@@ -113,7 +115,9 @@ class VllmStatApp(App):
                 yield self.p_tput
                 yield self.p_lat
             yield self.p_cache
+            yield self.p_shape
             yield self.p_session
+            yield self.p_outcomes
             yield self.p_eff
             yield self.p_spec
             yield self.p_gpu
@@ -224,7 +228,13 @@ class VllmStatApp(App):
         self.p_tput.update(render.throughput(snap, hist, width=self._panel_width(self.p_tput)))
         self.p_lat.update(render.latency(snap))
         self.p_cache.update(render.cache_kv(snap, hist))
+        shape = render.request_shape(snap)
+        self.p_shape.display = bool(shape)
+        self.p_shape.update(shape)
         self.p_session.update(render.session(snap))
+        outcomes = render.outcomes(snap)
+        self.p_outcomes.display = bool(outcomes)
+        self.p_outcomes.update(outcomes)
         eff = render.efficiency(snap)
         self.p_eff.display = bool(eff)
         self.p_eff.update(eff)

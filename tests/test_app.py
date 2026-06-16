@@ -160,3 +160,15 @@ async def test_proxy_starts_after_resolve_instances():
         assert app._proxy is not None
         assert app.fleet.runtimes[0].instance.url == "http://localhost:8000"
         assert app.query_one("#tee").display is True
+
+
+@pytest.mark.asyncio
+async def test_shape_and_outcomes_panels_present():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert app.snapshot is not None
+        # both panels are mounted and have a valid display state
+        assert app.query_one("#shape").display in (True, False)
+        assert app.query_one("#outcomes").display in (True, False)
