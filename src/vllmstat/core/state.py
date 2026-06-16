@@ -127,5 +127,6 @@ class Snapshot:
     gbps: float | None = None
     mfu: float | None = None
     bw_util: float | None = None
+    idle_watts_avg: float | None = None  # mean GPU power while idle (running == 0)
     # gpu
     gpu: GpuSnapshot = field(default_factory=GpuSnapshot)

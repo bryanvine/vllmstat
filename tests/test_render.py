@@ -520,3 +520,27 @@ def test_efficiency_tokens_per_watt():
     )
     out = render.efficiency(s)
     assert "tok/W" in out
+
+
+def test_efficiency_hides_tokw_when_idle():
+    # Regression: after inference stops, gen_tps decays toward 0 (EWMA residual); J/tok =
+    # power / gen_tps must NOT blow up — tok/W and J/tok are hidden below ~1 tok/s.
+    from vllmstat import render
+    from vllmstat.core.state import GpuSample, GpuSnapshot, Snapshot
+
+    s = Snapshot(
+        ts=0.0,
+        connected=True,
+        gen_tps=0.002,  # idle residual
+        gpu=GpuSnapshot(available=True, gpus=[GpuSample(index=0, name="x", power_w=32.0)]),
+    )
+    out = render.efficiency(s)
+    assert "tok/W" not in out and "J/tok" not in out
+
+
+def test_efficiency_shows_idle_watts():
+    from vllmstat import render
+    from vllmstat.core.state import Snapshot
+
+    out = render.efficiency(Snapshot(ts=0.0, connected=True, idle_watts_avg=32.0))
+    assert "idle 32 W" in out

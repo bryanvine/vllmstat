@@ -118,3 +118,12 @@ def test_mock_fleet_returns_3_connected_items():
     fs = asyncio.run(fleet.poll(host, 1.0))
     connected = [item for _, item in fs.items if item.connected]
     assert len(connected) == 3
+
+
+def test_runtime_idle_power_average():
+    rt = InstanceRuntime(Instance("a", "http://x"))
+    assert rt.record_idle_power(0.0, 30.0) == 30.0
+    assert rt.record_idle_power(5.0, 200.0) == 30.0  # active sample (running>0) ignored
+    assert rt.record_idle_power(0.0, 34.0) == 32.0  # mean of idle samples (30+34)/2
+    rt.reset_session()
+    assert rt.record_idle_power(5.0, 200.0) is None  # reset cleared the accumulator

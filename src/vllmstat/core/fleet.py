@@ -44,6 +44,8 @@ class InstanceRuntime:
         self.snapshot: Snapshot | None = None
         self.model_names: list[str] = []
         self._dims_loaded = False
+        self._idle_w_sum = 0.0
+        self._idle_w_n = 0
 
     async def _ensure_dims(self) -> None:
         if self._dims_loaded:
@@ -77,8 +79,17 @@ class InstanceRuntime:
         if s.prefix_hit_window is not None:
             self.history.push("prefix_hit", s.prefix_hit_window)
 
+    def record_idle_power(self, running: float, power_w: float | None) -> float | None:
+        """Accumulate the mean GPU power while idle (running == 0); return the running mean."""
+        if power_w and running == 0:
+            self._idle_w_sum += power_w
+            self._idle_w_n += 1
+        return (self._idle_w_sum / self._idle_w_n) if self._idle_w_n else None
+
     def reset_session(self) -> None:
         self._engine.reset_session()
+        self._idle_w_sum = 0.0
+        self._idle_w_n = 0
 
     async def aclose(self) -> None:
         await self._provider.aclose()
@@ -114,6 +125,8 @@ class Fleet:
                 res.gpu = slice_gpu(host_gpu, rt.instance.gpus)
             else:
                 res.gpu = GpuSnapshot(available=False, source="remote")
+            pw = sum(g.power_w for g in res.gpu.gpus if g.power_w) or None
+            res.idle_watts_avg = rt.record_idle_power(res.running, pw)
             items.append((rt.instance, res))
         return FleetSnapshot(ts=now, items=items, gpu=host_gpu)
 
