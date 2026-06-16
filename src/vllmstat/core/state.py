@@ -104,6 +104,18 @@ class Snapshot:
     tpot: Quantiles = field(default_factory=Quantiles)
     e2e: Quantiles = field(default_factory=Quantiles)
     queue: Quantiles = field(default_factory=Quantiles)
+    # latency phases (seconds)
+    prefill: Quantiles = field(default_factory=Quantiles)
+    decode: Quantiles = field(default_factory=Quantiles)
+    # request shape (token counts; .mean = average)
+    prompt_len: Quantiles = field(default_factory=Quantiles)
+    gen_len: Quantiles = field(default_factory=Quantiles)
+    # outcomes
+    finish_reasons: dict[str, float] = field(default_factory=dict)
+    goodput_ttft: float | None = None
+    goodput_tpot: float | None = None
+    ttft_slo_s: float = 1.0
+    tpot_slo_s: float = 0.05
     # speculative decoding
     spec_active: bool = False
     spec_acceptance: float | None = None  # accepted / draft_tokens

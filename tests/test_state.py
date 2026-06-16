@@ -51,3 +51,14 @@ def test_instance_logs_default_none():
     from vllmstat.core.state import Instance
 
     assert Instance(name="a", url="http://x").logs is None
+
+
+def test_snapshot_v06_metric_defaults():
+    from vllmstat.core.state import Quantiles, Snapshot
+
+    s = Snapshot(ts=0.0, connected=True)
+    assert s.prefill == Quantiles() and s.decode == Quantiles()
+    assert s.prompt_len == Quantiles() and s.gen_len == Quantiles()
+    assert s.finish_reasons == {}
+    assert s.goodput_ttft is None and s.goodput_tpot is None
+    assert s.ttft_slo_s == 1.0 and s.tpot_slo_s == 0.05

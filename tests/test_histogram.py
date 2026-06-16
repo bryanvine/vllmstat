@@ -34,3 +34,15 @@ def test_windowed_buckets_handles_reset():
     cur = [(0.1, 1.0), (float("inf"), 2.0)]  # counters reset (smaller)
     # falls back to current (treat prev as zero)
     assert windowed_buckets(prev, cur) == cur
+
+
+def test_histogram_fraction_below():
+    from vllmstat.core.histogram import histogram_fraction_below
+
+    b = [(0.1, 10.0), (0.5, 50.0), (1.0, 90.0), (float("inf"), 100.0)]
+    assert histogram_fraction_below(b, 0.5) == 0.5
+    result_03 = histogram_fraction_below(b, 0.3)
+    assert result_03 is not None and abs(result_03 - 0.30) < 1e-9
+    assert histogram_fraction_below(b, 5.0) == 0.9
+    assert histogram_fraction_below([], 1.0) is None
+    assert histogram_fraction_below([(1.0, 0.0)], 1.0) is None
