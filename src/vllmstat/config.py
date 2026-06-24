@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass, field
 
 from vllmstat import __version__
+from vllmstat.core.energy import EnergyConfig
 from vllmstat.core.state import Instance
 
 
@@ -22,6 +23,7 @@ class Config:
     instances: list[Instance] = field(default_factory=list)
     logs: str | None = None
     proxy: str | None = None
+    energy: EnergyConfig = field(default_factory=EnergyConfig)
 
     @property
     def url(self) -> str:

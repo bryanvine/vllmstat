@@ -60,6 +60,13 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
     gpu = config_globals.get("gpu")
     if cfg.gpu is True and isinstance(gpu, bool):
         cfg.gpu = gpu
+    energy_tbl = config_globals.get("energy")
+    if isinstance(energy_tbl, dict):
+        from vllmstat.core.energy import parse_energy_config
+        try:
+            cfg.energy = parse_energy_config(energy_tbl)
+        except ValueError as e:
+            print(f"vllmstat: ignoring [energy] config: {e}", file=sys.stderr)
     docker_instances = discover_docker() if cfg.discover_docker else []
     default_url = "http://localhost:8000"
     if (

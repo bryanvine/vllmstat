@@ -58,3 +58,40 @@ def test_main_rejects_invalid_proxy(capsys):
     rc = main(["--mock", "--proxy", "not-a-port"])
     assert rc == 2
     assert "invalid proxy port" in capsys.readouterr().err
+
+
+def test_config_has_energy_default():
+    from vllmstat.core.energy import EnergyConfig
+
+    cfg = Config.from_sources([], {})
+    assert isinstance(cfg.energy, EnergyConfig)
+    assert cfg.energy.currency == "$"
+
+
+def test_energy_config_loaded_from_file(tmp_path):
+    from vllmstat.cli import resolve_instances
+
+    p = tmp_path / "vllmstat.toml"
+    p.write_text(
+        '[energy]\ncurrency = "£"\n'
+        '[[energy.tou]]\ndefault = true\nrate = 0.15\n'
+    )
+    cfg = Config.from_sources(["--config", str(p)], {})
+    resolve_instances(cfg, {})
+    assert cfg.energy.currency == "£"
+    assert cfg.energy.tou[0].rate == 0.15
+
+
+def test_invalid_energy_config_is_ignored(tmp_path, capsys):
+    # bad config (tou rules but no default) must not crash; energy stays at defaults
+    from vllmstat.cli import resolve_instances
+
+    p = tmp_path / "vllmstat.toml"
+    p.write_text(
+        '[[energy.tou]]\ndays = "mon-fri"\nfrom = "9:00"\nto = "17:00"\nrate = 0.3\n'
+    )
+    cfg = Config.from_sources(["--config", str(p)], {})
+    resolve_instances(cfg, {})
+    assert cfg.energy.currency == "$"  # default, parse was rejected
+    err = capsys.readouterr().err
+    assert "energy" in err.lower()
