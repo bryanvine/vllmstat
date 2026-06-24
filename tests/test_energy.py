@@ -89,6 +89,28 @@ def test_rate_at_no_config_returns_none():
     assert rate_at(parse_energy_config({}), datetime(2026, 6, 24, 12, 0)) == (None, "")
 
 
+def test_parse_energy_config_rejects_half_window():
+    with pytest.raises(ValueError, match="both 'from' and 'to'"):
+        parse_energy_config(
+            {"tou": [{"days": "mon-fri", "from": "9:00", "rate": 0.3},
+                     {"default": True, "rate": 0.1}]}
+        )
+
+
+def test_parse_energy_config_rejects_multiple_defaults():
+    with pytest.raises(ValueError, match="exactly one"):
+        parse_energy_config(
+            {"tou": [{"default": True, "rate": 0.1}, {"default": True, "rate": 0.2}]}
+        )
+
+
+def test_parse_energy_config_rejects_bad_interval_and_retention():
+    with pytest.raises(ValueError):
+        parse_energy_config({"interval": 0})
+    with pytest.raises(ValueError):
+        parse_energy_config({"retention_days": -1})
+
+
 def test_energy_carriers_are_frozen_dataclasses():
     g = GpuEnergy(gpu_idx=0, watts=200.0, kwh=0.01, cost=0.002)
     i = InstanceEnergy(instance="a", kwh=0.01, cost=0.002, tokens=50.0)

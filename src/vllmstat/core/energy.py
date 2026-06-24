@@ -82,7 +82,11 @@ def parse_energy_config(table: dict) -> EnergyConfig:
     store = table.get("store")
     store = str(store) if store is not None else None
     interval = float(table.get("interval", 10.0))
+    if interval <= 0:
+        raise ValueError("energy interval must be > 0")
     retention_days = int(table.get("retention_days", 7))
+    if retention_days < 0:
+        raise ValueError("retention_days must be >= 0")
     rules: list[TouRule] = []
     raw = table.get("tou", [])
     if not isinstance(raw, list):
@@ -100,11 +104,13 @@ def parse_energy_config(table: dict) -> EnergyConfig:
             raise ValueError(f"invalid day in TOU rule: {e}") from e
         start = _parse_hhmm(r["from"]) if "from" in r else None
         end = _parse_hhmm(r["to"]) if "to" in r else None
+        if (start is None) != (end is None):
+            raise ValueError("a TOU window needs both 'from' and 'to'")
         rules.append(
             TouRule(rate=rate, days=days, start_min=start, end_min=end,
                     label=str(r.get("label", "")))
         )
-    if rules and not any(x.default for x in rules):
+    if rules and sum(1 for x in rules if x.default) != 1:
         raise ValueError("a TOU schedule needs exactly one rule with default = true")
     return EnergyConfig(
         currency=currency, store=store, interval=interval,
@@ -122,7 +128,10 @@ def _in_window(rule: TouRule, minute: int) -> bool:
 
 
 def rate_at(cfg: EnergyConfig, when: datetime) -> tuple[float | None, str]:
-    """Return (rate, label) for a local datetime, or (None, '') if no schedule."""
+    """Return (rate, label) for a local datetime, or (None, '') if no schedule.
+
+    When multiple non-default rules match, the first in config order wins.
+    """
     if not cfg.tou:
         return None, ""
     minute = when.hour * 60 + when.minute
