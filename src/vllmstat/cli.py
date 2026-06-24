@@ -173,9 +173,84 @@ def run_once_json(cfg: Config) -> int:
     return 0
 
 
+def _daemon_main(argv: list[str], env: dict[str, str]) -> int:
+    import argparse
+    from pathlib import Path
+
+    from vllmstat.core.service import install_unit, resolve_store_path, uninstall_unit, unit_path
+    from vllmstat.core.store import Store
+
+    p = argparse.ArgumentParser(prog="vllmstat daemon")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("run", "install", "uninstall", "status"):
+        sp = sub.add_parser(name)
+        sp.add_argument("--config", dest="config_path", default=None)
+        sp.add_argument("--store", dest="store", default=None)
+        sp.add_argument("--system", dest="system", action="store_true", default=False)
+        sp.add_argument("--user", dest="user", action="store_true", default=False)
+        sp.add_argument("--json", dest="json", action="store_true", default=False)
+    ns = p.parse_args(argv)
+
+    cfg = Config.from_sources((["--config", ns.config_path] if ns.config_path else []), env)
+    resolve_instances(cfg, env)
+    if ns.store:
+        from vllmstat.core.energy import replace_store
+        cfg.energy = replace_store(cfg.energy, ns.store)
+
+    if ns.cmd == "run":
+        from vllmstat.daemon import run
+        return run(cfg)
+
+    # install/uninstall default to system unless --user is given (--system is explicit)
+    system = ns.system or not ns.user
+
+    if ns.cmd == "install":
+        try:
+            path = install_unit(system=system)
+        except PermissionError:
+            print("vllmstat: need root to install a system unit (try --user or sudo)",
+                  file=sys.stderr)
+            return 1
+        scope = "" if system else "--user "
+        print(f"wrote {path}\nenable with:\n  systemctl {scope}daemon-reload\n"
+              f"  systemctl {scope}enable --now vllmstat")
+        return 0
+    if ns.cmd == "uninstall":
+        removed = uninstall_unit(system=system)
+        print(f"removed {unit_path(system=system)}" if removed else "no unit installed")
+        return 0
+
+    # status
+    path = resolve_store_path(cfg, for_write=False)
+    if not Path(path).expanduser().exists():
+        print("no energy store yet (start the daemon: vllmstat daemon run)")
+        return 0
+    store = Store.open(path, read_only=True)
+    view = store.read_view(now=time.time(), currency=cfg.energy.currency)
+    gpus = store.totals_gpu()
+    store.close()
+    if ns.json:
+        print(json.dumps({
+            "today_kwh": view.today_kwh, "today_cost": view.today_cost,
+            "alltime_kwh": view.alltime_kwh, "alltime_cost": view.alltime_cost,
+            "gpus": gpus,
+        }, default=str))
+    else:
+        cur = cfg.energy.currency
+        tc = f" ({cur}{view.today_cost:.2f})" if view.today_cost is not None else ""
+        ac = f" ({cur}{view.alltime_cost:.2f})" if view.alltime_cost is not None else ""
+        print(f"today:    {view.today_kwh:.2f} kWh{tc}")
+        print(f"all-time: {view.alltime_kwh:.2f} kWh{ac}")
+        for g in gpus:
+            print(f"  GPU{g['gpu_idx']}: {g['kwh']:.2f} kWh")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     env = dict(os.environ)
+    if argv and argv[0] == "daemon":
+        return _daemon_main(argv[1:], env)
     cfg = Config.from_sources(argv, env)
     if cfg.proxy:
         from vllmstat.providers.proxy import parse_proxy_addr
