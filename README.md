@@ -104,11 +104,71 @@ vllmstat --once --json
 - **Max context (lifetime)** — the largest single request the server has seen, as bucketed prompt-token and output-token maxima. Their sum is the smallest `--max-model-len` that would still fit every request observed, shown as a percentage of your configured context window — so a low percentage means headroom to shrink the context and reclaim KV cache. (Bucketed upper bounds; hidden until the first request completes.)
 - **Outcomes & goodput** — finish-reason breakdown (stop vs. length-truncated vs. abort/error) and the fraction of requests meeting an SLO (defaults: TTFT < 1 s, TPOT < 50 ms).
 - **Efficiency** — model FLOP/s, memory bandwidth, MFU, and **energy efficiency** — tokens per watt and joules per token as **session averages** (accumulated only while actively generating, so they stay on screen but stop changing once the server goes idle, rather than decaying or dividing by zero) — plus the **average idle power** the GPU draws while not serving.
+- **Energy & cost** — when the long-term daemon is running, an ENERGY panel shows today's and all-time energy (kWh) and cost, the current live draw (W now), and the effective electricity rate. Energy is the time-integral of measured GPU power, persisted to a local store so the totals survive restarts and accrue even when the dashboard is closed. Costs use an adjustable time-of-use rate schedule. Hidden when no store is present. See [Energy & cost](#energy--cost).
 - **Speculative decoding** — acceptance rate, accepted tokens per draft, per-position acceptance (when the server reports it). The panel is hidden when spec-decode is not active.
 - **Config advisor** — a panel that surfaces *only* when something looks wrong or sub-optimal, each line flagged `⚠` (sub-optimal) or `✖` (error / silent loss): KV-cache exhaustion (preemptions), output truncation at the length cap, request errors, an over-provisioned context window (using the max-context metric above), under-committed GPU memory, a queue backlog, ineffective speculative decoding, disabled prefix caching, and GPUs near their thermal/power limit. Each issue comes with the knob to turn. Stays hidden when the server is healthy.
 - **Per-GPU stats** — utilisation %, VRAM used / total, temperature, power draw vs. limit, clocks, fan. Works on NVIDIA, AMD, and Intel GPUs (see [GPU support](#gpu-support) for what each vendor reports). Multi-GPU and mixed-vendor hosts show every GPU.
 - **Fleet / multi-instance** — monitor many vLLM servers at once (local Docker containers and/or remote hosts) from one nvtop-style overview, and drill into any instance's full dashboard. See [Fleet monitoring](#fleet--multi-instance-monitoring).
 - **Tee** — a live, toggleable panel of traffic: a request feed tailed from the server logs, or (in proxy mode) the full prompts and streamed completions. See [Tee](#tee--request-feed--content-tee).
+
+---
+
+## Energy & cost
+
+vllmstat can track **total energy used (kWh) and its cost** over the long term. Because energy must accrue continuously — even when the dashboard is closed — collection runs in a small installable **daemon** that polls on its own interval and writes to a local SQLite store. The dashboard then opens that store read-only and shows an ENERGY panel:
+
+```
+ENERGY  today 2.4 kWh ($0.43)  ·  all-time 318 kWh ($57.2)
+        now 412 W  ·  rate $0.18/kWh (off-peak)
+```
+
+Energy is the time-integral of measured per-GPU power, rolled up per GPU and (via each instance's GPU mapping) per instance. Only GPUs local to the daemon's host are measured. The panel degrades gracefully: with no store it stays hidden, and with no configured rate it shows kWh only.
+
+### Running the daemon
+
+```bash
+# Foreground (any host; good for a quick try or non-systemd setups)
+vllmstat daemon run
+
+# Install a systemd service so it runs at boot
+sudo vllmstat daemon install            # system-wide unit (/etc/systemd/system), needs root
+vllmstat daemon install --user          # per-user unit (~/.config/systemd/user), no root
+
+# Inspect accumulated totals without opening the dashboard
+vllmstat daemon status                  # human summary
+vllmstat daemon status --json           # machine-readable
+
+# Remove the unit
+vllmstat daemon uninstall [--user]
+```
+
+The store lives at `/var/lib/vllmstat/vllmstat.db` for a system daemon, or `~/.local/state/vllmstat/vllmstat.db` for a user daemon (override with `--store` or the `[energy] store` config key). The dashboard resolves the same path automatically.
+
+### Configuring electricity rates
+
+Rates are set in the config file (see [Fleet config](#three-ways-to-define-a-fleet) for where that file lives) under an `[energy]` table. A flat rate is just a single default; a time-of-use schedule adds peak/off-peak windows:
+
+```toml
+[energy]
+currency = "$"
+# store = "/var/lib/vllmstat/vllmstat.db"   # optional path override
+# interval = 10                              # daemon poll seconds (default 10)
+# retention_days = 7                         # how long raw samples are kept
+
+[[energy.tou]]
+days = "mon-fri"
+from = "16:00"
+to   = "21:00"
+rate = 0.42
+label = "peak"
+
+[[energy.tou]]
+default = true        # exactly one rule must be the default fallback
+rate = 0.12
+label = "off-peak"
+```
+
+Each rule matches by weekday range (`mon-fri`, `sat-sun`, `mon-sun`, single days, or comma lists) and a `from`/`to` time window (overnight windows that cross midnight are supported); the first matching rule wins, otherwise the `default` rule applies. Times use the daemon host's local timezone, so daylight-saving transitions are handled automatically. Samples store rate-agnostic kWh, so cost is recomputed correctly if you change the schedule.
 
 ---
 
