@@ -13,7 +13,7 @@ from vllmstat.core.advisor import detect_issues
 from vllmstat.core.fleet import Fleet, InstanceRuntime
 from vllmstat.core.history import History
 from vllmstat.core.resolve import derive_name
-from vllmstat.core.state import FleetSnapshot, GpuSnapshot, Instance, Snapshot
+from vllmstat.core.state import EnergyView, FleetSnapshot, GpuSnapshot, Instance, Snapshot
 from vllmstat.core.tee import TeeEvent
 from vllmstat.providers.gpu import GpuProvider
 from vllmstat.providers.logsource import LogTailer
@@ -93,6 +93,19 @@ class VllmStatApp(App):
                 api_key=rt0.instance.api_key,
             )
             self._proxy_desc = f"proxy :{port} → {rt0.instance.url}"
+        self._energy_view = EnergyView()
+        self._energy_store = None
+        try:
+            from pathlib import Path
+
+            from vllmstat.core.service import resolve_store_path
+            from vllmstat.core.store import Store
+
+            path = resolve_store_path(cfg, for_write=False)
+            if Path(path).expanduser().exists():
+                self._energy_store = Store.open(path, read_only=True)
+        except Exception:
+            self._energy_store = None
 
     def compose(self) -> ComposeResult:
         self.p_overview = Panel(id="overview")
@@ -107,6 +120,7 @@ class VllmStatApp(App):
         self.p_session = Panel(id="session")
         self.p_outcomes = Panel(id="outcomes")
         self.p_eff = Panel(id="eff")
+        self.p_energy = Panel(id="energy")
         self.p_spec = Panel(id="spec")
         self.p_advisor = Panel(id="advisor")
         self.p_gpu = Panel(id="gpu")
@@ -123,6 +137,7 @@ class VllmStatApp(App):
             yield self.p_session
             yield self.p_outcomes
             yield self.p_eff
+            yield self.p_energy
             yield self.p_spec
             yield self.p_advisor
             yield self.p_gpu
@@ -165,6 +180,8 @@ class VllmStatApp(App):
             tailer.terminate()
         if self._proxy is not None:
             await self._proxy.stop()
+        if self._energy_store is not None:
+            self._energy_store.close()
 
     def _apply_mode(self) -> None:
         self.p_overview.display = self.is_fleet and not self.in_detail
@@ -189,11 +206,31 @@ class VllmStatApp(App):
         else:
             host_gpu = GpuSnapshot()
         fs = await self.fleet.poll(host_gpu, now)
+        self._refresh_energy(host_gpu)
         self.fleet_snapshot = fs
         if fs.items:
             idx = min(self.selected, len(fs.items) - 1)
             self.snapshot = fs.items[idx][1]
         self._refresh()
+
+    def _refresh_energy(self, host_gpu: GpuSnapshot) -> None:
+        from datetime import datetime
+
+        from vllmstat.core.energy import rate_at
+
+        if self._energy_store is None:
+            self._energy_view = EnergyView(available=False)
+            return
+        try:
+            view = self._energy_store.read_view(
+                now=time.time(), currency=self.cfg.energy.currency
+            )
+        except Exception:
+            self._energy_view = EnergyView(available=False)
+            return
+        view.now_w = sum(g.power_w for g in host_gpu.gpus if g.power_w) or None
+        view.rate, view.rate_label = rate_at(self.cfg.energy, datetime.now())
+        self._energy_view = view
 
     def _refresh(self) -> None:
         if self.fleet_snapshot is None:
@@ -246,6 +283,9 @@ class VllmStatApp(App):
         eff = render.efficiency(snap)
         self.p_eff.display = bool(eff)
         self.p_eff.update(eff)
+        energy = render.energy_panel(self._energy_view)
+        self.p_energy.display = bool(energy)
+        self.p_energy.update(energy)
         spec = render.specdecode(snap)
         self.p_spec.display = bool(spec)
         self.p_spec.update(spec)
