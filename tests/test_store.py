@@ -52,6 +52,23 @@ def test_cost_none_when_rate_unset(tmp_path):
     s.close()
 
 
+def test_open_enables_wal(tmp_path):
+    s = _open(tmp_path)
+    mode = s._conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode == "wal"
+    s.close()
+
+
+def test_multi_gpu_accumulate_separately(tmp_path):
+    s = _open(tmp_path)
+    ts = 1782648000.0
+    s.record(ts, [GpuEnergy(0, 100.0, 0.5, 0.05), GpuEnergy(1, 200.0, 1.0, 0.10)],
+             [InstanceEnergy("a", 1.5, 0.15)])
+    g = {r["gpu_idx"]: r for r in s.totals_gpu()}
+    assert g[0]["kwh"] == pytest.approx(0.5) and g[1]["kwh"] == pytest.approx(1.0)
+    s.close()
+
+
 def test_concurrent_readonly_open(tmp_path):
     w = _open(tmp_path)
     w.record(1782648000.0, [GpuEnergy(0, 100.0, 0.5, 0.05)], [InstanceEnergy("a", 0.5, 0.05)])

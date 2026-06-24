@@ -50,18 +50,25 @@ class Store:
 
     @classmethod
     def open(cls, path: str, *, read_only: bool = False) -> Store:
+        """Open the energy store.
+
+        When ``read_only=True`` the database file must already exist; callers
+        guard with an existence check before opening. Opening a missing file in
+        read-only mode raises ``sqlite3.OperationalError``. This method does not
+        add fallback logic for an absent file — that is handled at the call site.
+        """
         p = Path(path).expanduser()
         if read_only:
             conn = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=2.0)
         else:
             p.parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(str(p), timeout=5.0)
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
             conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.commit()
         return cls(conn)
 
