@@ -592,3 +592,36 @@ def test_efficiency_shows_idle_watts():
 
     out = render.efficiency(Snapshot(ts=0.0, connected=True, idle_watts_avg=32.0))
     assert "idle 32 W" in out
+
+
+def test_energy_panel_full():
+    from vllmstat import render
+    from vllmstat.core.state import EnergyView
+
+    v = EnergyView(available=True, currency="$", today_kwh=2.4, today_cost=0.43,
+                   alltime_kwh=318.0, alltime_cost=57.2, now_w=412.0, rate=0.18,
+                   rate_label="off-peak")
+    out = render.energy_panel(v)
+    assert "ENERGY" in out
+    assert "today 2.4 kWh ($0.43)" in out
+    assert "all-time 318.0 kWh ($57.20)" in out
+    assert "now 412 W" in out and "$0.18/kWh" in out and "off-peak" in out
+
+
+def test_energy_panel_rate_unset_hides_cost():
+    from vllmstat import render
+    from vllmstat.core.state import EnergyView
+
+    v = EnergyView(available=True, currency="$", today_kwh=2.4, today_cost=None,
+                   alltime_kwh=318.0, alltime_cost=None, now_w=400.0, rate=None)
+    out = render.energy_panel(v)
+    assert "today 2.4 kWh" in out and "rate unset" in out
+    # no cost parens rendered when costs are None
+    assert "($" not in out
+
+
+def test_energy_panel_empty_when_unavailable():
+    from vllmstat import render
+    from vllmstat.core.state import EnergyView
+
+    assert render.energy_panel(EnergyView(available=False)) == ""

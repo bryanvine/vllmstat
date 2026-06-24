@@ -4,7 +4,7 @@ import time
 
 from vllmstat.core.advisor import Issue
 from vllmstat.core.history import History
-from vllmstat.core.state import FleetSnapshot, Instance, Snapshot
+from vllmstat.core.state import EnergyView, FleetSnapshot, Instance, Snapshot
 from vllmstat.core.tee import TeeEvent
 from vllmstat.format import fmt_bytes, fmt_dur, fmt_dur_hms, fmt_pct, fmt_si, sparkline
 from vllmstat.plot import braille_plot
@@ -257,6 +257,34 @@ def efficiency(s: Snapshot) -> str:
     if has_idle:
         parts.append(f"idle {s.idle_watts_avg:.0f} W")
     return "EFFICIENCY  " + " · ".join(parts) if parts else ""
+
+
+def _kwh(v: float) -> str:
+    return f"{v:.1f} kWh"
+
+
+def energy_panel(v: EnergyView) -> str:
+    if not v.available:
+        return ""
+    cur = v.currency
+
+    def money(x: float | None) -> str:
+        return f" ({cur}{x:.2f})" if x is not None else ""
+
+    line1 = (
+        f"today {_kwh(v.today_kwh)}{money(v.today_cost)}  ·  "
+        f"all-time {_kwh(v.alltime_kwh)}{money(v.alltime_cost)}"
+    )
+    bits = []
+    if v.now_w is not None:
+        bits.append(f"now {v.now_w:.0f} W")
+    if v.rate is not None:
+        label = f" ({v.rate_label})" if v.rate_label else ""
+        bits.append(f"rate {cur}{v.rate:.2f}/kWh{label}")
+    else:
+        bits.append("rate unset")
+    line2 = " · ".join(bits)
+    return f"ENERGY  {line1}\n        {line2}"
 
 
 def _tee_one_line(text: str, width: int) -> str:
