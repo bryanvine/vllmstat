@@ -168,7 +168,7 @@ rate = 0.12
 label = "off-peak"
 ```
 
-Each rule matches by weekday range (`mon-fri`, `sat-sun`, `mon-sun`, single days, or comma lists) and a `from`/`to` time window (overnight windows that cross midnight are supported); the first matching rule wins, otherwise the `default` rule applies. Times use the daemon host's local timezone, so daylight-saving transitions are handled automatically. Samples store rate-agnostic kWh, so cost is recomputed correctly if you change the schedule.
+Each rule matches by weekday range (`mon-fri`, `sat-sun`, `mon-sun`, single days, or comma lists) and a `from`/`to` time window (overnight windows that cross midnight are supported); the first matching rule wins, otherwise the `default` rule applies. Times use the daemon host's local timezone, so daylight-saving transitions are handled automatically. Each interval's cost is priced at the rate in effect when it was recorded, so changing the schedule only affects energy logged afterwards. Cost reflects only intervals that had a configured rate — energy logged with no rate set contributes kWh but not cost, so a partial-rate day can understate spend.
 
 ---
 
