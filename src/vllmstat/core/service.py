@@ -22,7 +22,8 @@ def resolve_store_path(cfg: Config, *, for_write: bool) -> str:
     `--store`/config override wins. Otherwise prefer the system store when its
     directory is writable (daemon as root); else fall back to the per-user store.
     For reads, prefer the system store if it exists, else the user store — so a
-    user-run TUI still finds a user-run daemon's DB.
+    user-run TUI still finds a user-run daemon's DB. The user-store path is resolved
+    at call time so XDG_STATE_HOME is always honored.
     """
     if cfg.energy.store:
         return cfg.energy.store
@@ -30,8 +31,8 @@ def resolve_store_path(cfg: Config, *, for_write: bool) -> str:
     if for_write:
         if os.access(sys_dir, os.W_OK) or (not sys_dir.exists() and os.access("/var/lib", os.W_OK)):
             return SYSTEM_STORE
-        return USER_STORE
-    return SYSTEM_STORE if Path(SYSTEM_STORE).exists() else USER_STORE
+        return _user_store()
+    return SYSTEM_STORE if Path(SYSTEM_STORE).exists() else _user_store()
 
 
 def unit_path(*, system: bool) -> str:

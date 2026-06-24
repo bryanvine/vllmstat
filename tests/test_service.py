@@ -46,6 +46,16 @@ def test_resolve_store_path_default_is_known_location():
     assert resolve_store_path(cfg, for_write=False) in (SYSTEM_STORE, USER_STORE)
 
 
+def test_resolve_store_path_user_respects_xdg_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    cfg = Config.from_sources([], {})
+    result = resolve_store_path(cfg, for_write=False)
+    # when the system store doesn't exist, the user path honors the patched XDG_STATE_HOME
+    from pathlib import Path
+    if not Path("/var/lib/vllmstat/vllmstat.db").exists():
+        assert result == str(tmp_path / "vllmstat" / "vllmstat.db")
+
+
 def test_install_and_uninstall_user_unit(monkeypatch, tmp_path):
     from vllmstat.core.service import install_unit
 
