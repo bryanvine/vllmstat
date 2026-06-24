@@ -143,3 +143,17 @@ class Snapshot:
     joules_per_token: float | None = None
     # gpu
     gpu: GpuSnapshot = field(default_factory=GpuSnapshot)
+
+
+@dataclass
+class EnergyView:
+    """Read-only energy figures for the TUI (assembled from the store + live data)."""
+    available: bool = False
+    currency: str = "$"
+    today_kwh: float = 0.0
+    today_cost: float | None = None
+    alltime_kwh: float = 0.0
+    alltime_cost: float | None = None
+    now_w: float | None = None
+    rate: float | None = None
+    rate_label: str = ""
