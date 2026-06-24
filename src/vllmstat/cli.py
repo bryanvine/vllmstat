@@ -226,9 +226,11 @@ def _daemon_main(argv: list[str], env: dict[str, str]) -> int:
         print("no energy store yet (start the daemon: vllmstat daemon run)")
         return 0
     store = Store.open(path, read_only=True)
-    view = store.read_view(now=time.time(), currency=cfg.energy.currency)
-    gpus = store.totals_gpu()
-    store.close()
+    try:
+        view = store.read_view(now=time.time(), currency=cfg.energy.currency)
+        gpus = store.totals_gpu()
+    finally:
+        store.close()
     if ns.json:
         print(json.dumps({
             "today_kwh": view.today_kwh, "today_cost": view.today_cost,

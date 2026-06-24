@@ -41,3 +41,19 @@ def test_daemon_status_reads_store(tmp_path, monkeypatch, capsys):
     import json as _j
     data = _j.loads(out)
     assert data["alltime_kwh"] == 1.5 and data["gpus"][0]["gpu_idx"] == 0
+
+
+def test_daemon_status_human_output(tmp_path, capsys):
+    from vllmstat.cli import main
+    from vllmstat.core.energy import GpuEnergy, InstanceEnergy
+    from vllmstat.core.store import Store
+
+    db = tmp_path / "e.db"
+    s = Store.open(str(db))
+    s.record(1782648000.0, [GpuEnergy(0, 200.0, 1.5, 0.30)], [InstanceEnergy("a", 1.5, 0.30)])
+    s.close()
+    rc = main(["daemon", "status", "--store", str(db)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "all-time: 1.50 kWh ($0.30)" in out
+    assert "GPU0: 1.50 kWh" in out
