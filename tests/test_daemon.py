@@ -69,6 +69,18 @@ def test_collector_attributes_only_mapped_gpus_to_instance(tmp_path):
     store.close()
 
 
+def test_collector_clamps_token_counter_reset(tmp_path):
+    store = Store.open(str(tmp_path / "e.db"))
+    cfg = parse_energy_config({"tou": [{"default": True, "rate": 0.10}]})
+    col = Collector(store, cfg)
+    inst = Instance("a", "http://x", gpus=(0,), locality="local")
+    col.step(0.0, [(inst, _snap(gen_tokens=1000.0, gpus=[(0, 1000.0)]))])
+    # counter resets to a lower value (server restarted) -> token delta clamped to 0, not negative
+    col.step(3600.0, [(inst, _snap(gen_tokens=5.0, gpus=[(0, 1000.0)]))])
+    assert store.totals_instance()[0]["tokens"] == pytest.approx(0.0)
+    store.close()
+
+
 def test_collector_skips_remote_instances(tmp_path):
     store = Store.open(str(tmp_path / "e.db"))
     cfg = parse_energy_config({"tou": [{"default": True, "rate": 0.10}]})

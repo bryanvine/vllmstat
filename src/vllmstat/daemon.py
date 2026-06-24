@@ -89,22 +89,24 @@ async def _run_loop(cfg: Config, store: Store) -> int:
 
     interval = cfg.energy.interval
     retention_s = cfg.energy.retention_days * 86400
-    last_prune = 0.0
+    last_prune = time.time()
     print(f"vllmstat daemon: polling {len(runtimes)} instance(s) every {interval:g}s", flush=True)
-    while not stop.is_set():
-        now = time.time()
-        host_gpu = gpu.sample()
-        fs = await fleet.poll(host_gpu, now)
-        col.step(now, fs.items)
-        if now - last_prune > 3600:
-            store.prune(before_ts=now - retention_s)
-            last_prune = now
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            pass
-    await fleet.aclose()
-    store.close()
+    try:
+        while not stop.is_set():
+            now = time.time()
+            host_gpu = gpu.sample()
+            fs = await fleet.poll(host_gpu, now)
+            col.step(now, fs.items)
+            if now - last_prune > 3600:
+                store.prune(before_ts=now - retention_s)
+                last_prune = now
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        await fleet.aclose()
+        store.close()
     return 0
 
 
@@ -113,8 +115,4 @@ def run(cfg: Config) -> int:
 
     path = resolve_store_path(cfg, for_write=True)
     store = Store.open(path)
-    try:
-        return asyncio.run(_run_loop(cfg, store))
-    except KeyboardInterrupt:  # pragma: no cover
-        store.close()
-        return 0
+    return asyncio.run(_run_loop(cfg, store))
