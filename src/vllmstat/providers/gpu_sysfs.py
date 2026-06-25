@@ -43,11 +43,19 @@ class Card:
 
 
 def read_text(path: str) -> str | None:
-    """Return the stripped contents of ``path`` or ``None`` on any error."""
+    """Return the stripped contents of ``path`` or ``None`` on any error.
+
+    Catches ``Exception`` (not just ``OSError``): reading some hwmon attributes
+    on real hardware (e.g. Intel ``fan1_input``) makes the kernel feed ``None``
+    into the text decoder mid-read, which surfaces as ``TypeError: can't concat
+    NoneType to bytes`` from ``fh.read()`` rather than an ``OSError``. This reader
+    is the single choke point for every sysfs string/int read and must never
+    raise, so the whole TUI degrades to ``—`` instead of crashing.
+    """
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             return fh.read().strip()
-    except OSError:
+    except Exception:  # noqa: BLE001 - sysfs reads must never raise; degrade to None
         return None
 
 

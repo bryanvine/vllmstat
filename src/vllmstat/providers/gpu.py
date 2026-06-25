@@ -240,9 +240,19 @@ class GpuProvider:
     # -- public API ------------------------------------------------------
 
     def sample(self) -> GpuSnapshot:
+        """Public entry. Degrades to an unavailable snapshot if a backend read
+        raises unexpectedly, so one flaky sysfs/driver read can't crash the app.
+        """
         if not self.enabled:
             return GpuSnapshot(available=False, source="none", error="disabled")
+        try:
+            return self._sample()
+        except Exception as e:  # noqa: BLE001 - never let a backend read crash the tick
+            return GpuSnapshot(
+                available=False, source="error", error=f"gpu sample failed: {e}"
+            )
 
+    def _sample(self) -> GpuSnapshot:
         root = self._drm_root if self._drm_root is not None else "/sys/class/drm"
         cards = detect_cards(root)
         gpus: list[GpuSample] = []

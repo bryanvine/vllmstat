@@ -273,6 +273,24 @@ def test_provider_intel_fdinfo_util_fallback_when_gtidle_none(tmp_path):  # noqa
     assert g.mem_used == 20_000_000 * 1024
 
 
+def test_sample_degrades_when_backend_read_raises(tmp_path, monkeypatch):  # noqa: ANN001
+    # A backend read that raises unexpectedly must degrade to an unavailable
+    # snapshot, not propagate out of sample() and crash the app's tick loop.
+    drm = _intel_card(tmp_path)
+    p = GpuProvider(enabled=True, drm_root=str(drm), clock=lambda: 100.0)
+
+    import vllmstat.providers.gpu as gpumod
+
+    def boom(*_a, **_k):
+        raise TypeError("can't concat NoneType to bytes")
+
+    monkeypatch.setattr(gpumod, "read_intel_sysfs", boom)
+
+    snap = p.sample()  # must not raise
+    assert snap.available is False
+    assert snap.error
+
+
 def test_provider_no_cards_no_nvml_reports_unavailable(tmp_path):  # noqa: ANN001
     empty = tmp_path / "drm"
     empty.mkdir()

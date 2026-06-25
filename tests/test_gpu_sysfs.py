@@ -33,6 +33,38 @@ def test_read_text_missing_returns_none(tmp_path: Path):
     assert read_int(str(tmp_path / "nope")) is None
 
 
+def test_read_text_swallows_non_oserror_from_read(tmp_path: Path, monkeypatch):
+    """A sysfs read that raises a non-OSError must degrade to None, not crash.
+
+    Reading some hwmon attributes on real hardware (e.g. Intel ``fan1_input``)
+    makes the kernel feed ``None`` into the text decoder mid-read, surfacing as
+    ``TypeError: can't concat NoneType to bytes`` from ``fh.read()`` — not an
+    ``OSError``. ``read_text`` promises "None on any error", so it must catch it.
+    """
+    target = tmp_path / "fan1_input"
+    target.write_text("0\n")
+    real_open = open
+
+    class _ExplodingFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            raise TypeError("can't concat NoneType to bytes")
+
+    def fake_open(path, *args, **kwargs):
+        if str(path) == str(target):
+            return _ExplodingFile()
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    assert read_text(str(target)) is None
+    assert read_int(str(target)) is None
+
+
 def test_read_int_non_numeric_returns_none(tmp_path: Path):
     f = tmp_path / "val"
     f.write_text("xe\n")
