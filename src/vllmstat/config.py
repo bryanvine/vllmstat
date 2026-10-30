@@ -19,7 +19,10 @@ class Config:
     once: bool = False
     json: bool = False
     config_path: str | None = None
-    discover_docker: bool = False
+    # None = auto (discover unless explicit targets were given); True/False = forced by flag.
+    discover_docker: bool | None = None
+    discover_proc: bool | None = None  # same auto/forced semantics, for bare host processes
+    combined: bool = False
     instances: list[Instance] = field(default_factory=list)
     logs: str | None = None
     proxy: str | None = None
@@ -42,7 +45,37 @@ class Config:
         p.add_argument("--json", action="store_true", default=False)
         p.add_argument("--config", dest="config_path", default=None)
         p.add_argument(
-            "--discover-docker", dest="discover_docker", action="store_true", default=False
+            "--discover-docker",
+            dest="discover_docker",
+            action="store_true",
+            default=None,
+            help="force Docker discovery even when --url/--config are given (default: auto)",
+        )
+        p.add_argument(
+            "--no-discover-docker",
+            dest="discover_docker",
+            action="store_false",
+            help="never scan the local Docker daemon for vLLM containers",
+        )
+        p.add_argument(
+            "--discover-proc",
+            dest="discover_proc",
+            action="store_true",
+            default=None,
+            help="force host-process discovery even when --url/--config are given (default: auto)",
+        )
+        p.add_argument(
+            "--no-discover-proc",
+            dest="discover_proc",
+            action="store_false",
+            help="never scan local processes for `vllm serve` servers",
+        )
+        p.add_argument(
+            "--combined",
+            dest="combined",
+            action="store_true",
+            default=False,
+            help="open the combined (all instances) dashboard; with --once --json, emit it",
         )
         p.add_argument("--logs", dest="logs", default=None)
         p.add_argument("--proxy", dest="proxy", default=None)
@@ -64,6 +97,8 @@ class Config:
             json=ns.json,
             config_path=ns.config_path,
             discover_docker=ns.discover_docker,
+            discover_proc=ns.discover_proc,
+            combined=ns.combined,
             logs=ns.logs,
             proxy=ns.proxy,
         )

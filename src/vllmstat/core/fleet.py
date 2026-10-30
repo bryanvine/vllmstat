@@ -5,7 +5,7 @@ from typing import Any
 
 from vllmstat.core.history import History
 from vllmstat.core.metrics import MetricsEngine
-from vllmstat.core.parse import parse_metrics
+from vllmstat.core.parse import Families, parse_metrics
 from vllmstat.core.state import FleetSnapshot, GpuSnapshot, Instance, Snapshot
 from vllmstat.core.tee import TeeBuffer
 from vllmstat.model_dims import load_model_dims
@@ -15,6 +15,8 @@ from vllmstat.providers.vllm import VllmProvider
 # Below it, gen_tps is just an EWMA residual after inference stops, so per-token
 # energy figures would be meaningless — efficiency is held, not recomputed.
 _EFF_MIN_TPS = 1.0
+
+COMBINED_NAME = "ALL"
 
 
 def slice_gpu(host: GpuSnapshot, gpus: tuple[int, ...]) -> GpuSnapshot:
@@ -47,6 +49,8 @@ class InstanceRuntime:
         self.history: History = History()
         self.tee: TeeBuffer = TeeBuffer()
         self.snapshot: Snapshot | None = None
+        # Last successfully parsed /metrics families (None while down): feeds the combined view.
+        self.families: Families | None = None
         self.model_names: list[str] = []
         self._dims_loaded = False
         self._idle_w_sum = 0.0
@@ -69,8 +73,10 @@ class InstanceRuntime:
         await self._ensure_dims()
         raw = await self._provider.fetch_metrics()
         if raw.fetched_ok and raw.text:
-            snap = self._engine.derive(parse_metrics(raw.text), now=now)
+            self.families = parse_metrics(raw.text)
+            snap = self._engine.derive(self.families, now=now)
         else:
+            self.families = None
             prev = self.snapshot
             snap = prev if prev is not None else Snapshot(ts=now, connected=False, error=raw.error)
             snap.connected = False
@@ -124,6 +130,115 @@ class InstanceRuntime:
         await self._provider.aclose()
 
 
+def merge_families(parts: list[tuple[str, Families]]) -> Families:
+    """Concatenate several instances' families, tagging each sample with an ``instance`` label.
+
+    Counters and histogram buckets then sum naturally in the engine (it already sums
+    across ``model_name``/``engine`` labels), so rates, session totals, and latency
+    quantiles come out fleet-wide. Ratio gauges and per-server config are fixed up
+    afterwards by :meth:`CombinedRuntime.derive`.
+    """
+    merged: Families = {}
+    for name, fam in parts:
+        for sample, rows in fam.items():
+            merged.setdefault(sample, []).extend(({**lbl, "instance": name}, v) for lbl, v in rows)
+    return merged
+
+
+def combined_instance(instances: list[Instance]) -> Instance:
+    """The synthetic Instance that stands for every instance at once.
+
+    GPUs are the union of the local instances' pins; any local instance without an
+    explicit pin means "whole host" (matches :func:`slice_gpu`).
+    """
+    local = [i for i in instances if i.locality == "local"]
+    gpus: tuple[int, ...] = ()
+    if local and all(i.gpus for i in local):
+        gpus = tuple(sorted({g for i in local for g in i.gpus}))
+    return Instance(
+        name=COMBINED_NAME,
+        url="",
+        gpus=gpus,
+        locality="local" if local else "remote",
+    )
+
+
+class _NoProvider:
+    async def fetch_model_info(self):  # pragma: no cover - never called
+        raise RuntimeError("combined runtime has no provider")
+
+    async def fetch_metrics(self):  # pragma: no cover - never called
+        raise RuntimeError("combined runtime has no provider")
+
+    async def aclose(self) -> None:
+        return None
+
+
+class CombinedRuntime(InstanceRuntime):
+    """One MetricsEngine fed the merged families of every instance in the fleet.
+
+    It is derived from the real runtimes' last poll rather than polled itself, so it
+    carries its own history, session accumulators, and efficiency means like any
+    other runtime and renders through the unchanged detail dashboard.
+    """
+
+    def __init__(self, instance: Instance) -> None:
+        super().__init__(instance, provider=_NoProvider())
+        self._dims_loaded = True
+
+    async def poll(self, now: float) -> Snapshot:
+        raise RuntimeError("CombinedRuntime is derived via derive(), not polled")
+
+    def derive(
+        self, parts: list[tuple[Instance, Families | None, Snapshot]], now: float
+    ) -> Snapshot:
+        live = [(inst, fam, snap) for inst, fam, snap in parts if fam is not None]
+        down = [inst.name for inst, fam, _ in parts if fam is None]
+        if not live:
+            snap = Snapshot(ts=now, connected=False, error="no instances reachable")
+        else:
+            snap = self._engine.derive(merge_families([(i.name, f) for i, f, _ in live]), now=now)
+            self._fixup(snap, [s for _, _, s in live])
+            if down:
+                snap.error = "down: " + ", ".join(down)
+        self.snapshot = snap
+        self._push_history(snap)
+        return snap
+
+    @staticmethod
+    def _fixup(snap: Snapshot, snaps: list[Snapshot]) -> None:
+        """Repair fields that don't sum: engine count, KV usage, and per-server config."""
+        snap.engine_count = sum(s.engine_count for s in snaps)
+        # Per-server config drives the advisor and context ratios; they only make sense
+        # for one server, so the combined view leaves them unset.
+        snap.max_model_len = None
+        snap.gpu_memory_utilization = None
+        snap.prefix_caching_enabled = None
+        snap.kv_fp16_full_ctx_gb = None
+        caps = [s.kv_capacity_tokens for s in snaps if s.kv_capacity_tokens]
+        used = [s.kv_used_tokens for s in snaps if s.kv_used_tokens is not None]
+        cap_total = sum(caps) if caps else None
+        used_total = sum(used) if used else None
+        snap.kv_capacity_tokens = cap_total
+        snap.kv_used_tokens = used_total
+        if cap_total and used_total is not None:
+            snap.kv_usage = min(1.0, used_total / cap_total)
+        else:
+            snap.kv_usage = sum(s.kv_usage for s in snaps) / len(snaps)
+        dtypes = {s.kv_dtype for s in snaps if s.kv_dtype}
+        if len(dtypes) == 1:
+            snap.kv_dtype = dtypes.pop()
+            ratios = {(s.kv_ratio, s.kv_ratio_kind) for s in snaps}
+            if len(ratios) != 1:
+                snap.kv_ratio, snap.kv_ratio_kind = None, "none"
+            eq = [s.kv_fp16_equiv_tokens for s in snaps if s.kv_fp16_equiv_tokens]
+            snap.kv_fp16_equiv_tokens = sum(eq) if eq else None
+        else:
+            snap.kv_dtype = "mixed" if dtypes else None
+            snap.kv_ratio, snap.kv_ratio_kind = None, "none"
+            snap.kv_fp16_equiv_tokens = None
+
+
 class Fleet:
     """A collection of InstanceRuntimes polled concurrently."""
 
@@ -132,10 +247,32 @@ class Fleet:
         instances: list[Instance],
         *,
         runtimes: list[InstanceRuntime] | None = None,
+        combined: bool = False,
     ) -> None:
         self.runtimes: list[InstanceRuntime] = (
             runtimes if runtimes is not None else [InstanceRuntime(i) for i in instances]
         )
+        self.combined: CombinedRuntime | None = (
+            CombinedRuntime(combined_instance([rt.instance for rt in self.runtimes]))
+            if combined
+            else None
+        )
+
+    @property
+    def views(self) -> list[InstanceRuntime]:
+        """Runtimes in UI order: the combined one first (when enabled), then each instance."""
+        return ([self.combined] if self.combined is not None else []) + self.runtimes
+
+    @staticmethod
+    def _attach_host(rt: InstanceRuntime, res: Snapshot, host_gpu: GpuSnapshot) -> None:
+        """Slice host GPUs onto a snapshot and fold power into the runtime's session means."""
+        if rt.instance.locality == "local":
+            res.gpu = slice_gpu(host_gpu, rt.instance.gpus)
+        else:
+            res.gpu = GpuSnapshot(available=False, source="remote")
+        pw = sum(g.power_w for g in res.gpu.gpus if g.power_w) or None
+        res.idle_watts_avg = rt.record_idle_power(res.running, pw)
+        res.tokens_per_watt, res.joules_per_token = rt.record_efficiency(res.gen_tps, pw)
 
     async def poll(self, host_gpu: GpuSnapshot, now: float) -> FleetSnapshot:
         """Poll all runtimes concurrently; isolate failures; attach GPU slices."""
@@ -150,15 +287,19 @@ class Fleet:
                     prev if prev is not None else Snapshot(ts=now, connected=False, error=str(res))
                 )
                 res.connected = False
-            if rt.instance.locality == "local":
-                res.gpu = slice_gpu(host_gpu, rt.instance.gpus)
-            else:
-                res.gpu = GpuSnapshot(available=False, source="remote")
-            pw = sum(g.power_w for g in res.gpu.gpus if g.power_w) or None
-            res.idle_watts_avg = rt.record_idle_power(res.running, pw)
-            res.tokens_per_watt, res.joules_per_token = rt.record_efficiency(res.gen_tps, pw)
+                rt.families = None
+            self._attach_host(rt, res, host_gpu)
             items.append((rt.instance, res))
-        return FleetSnapshot(ts=now, items=items, gpu=host_gpu)
+        combined = None
+        if self.combined is not None:
+            parts = [
+                (rt.instance, rt.families, snap)
+                for rt, (_, snap) in zip(self.runtimes, items, strict=True)
+            ]
+            csnap = self.combined.derive(parts, now)
+            self._attach_host(self.combined, csnap, host_gpu)
+            combined = (self.combined.instance, csnap)
+        return FleetSnapshot(ts=now, items=items, gpu=host_gpu, combined=combined)
 
     async def aclose(self) -> None:
         await asyncio.gather(*(rt.aclose() for rt in self.runtimes), return_exceptions=True)

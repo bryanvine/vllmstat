@@ -49,10 +49,12 @@ def test_resolve_instances_applies_config_globals(tmp_path):
     assert len(cfg.instances) == 1 and cfg.instances[0].name == "a"
 
 
-def test_resolve_instances_applies_cli_logs_default():
+def test_resolve_instances_applies_cli_logs_default(monkeypatch):
+    from vllmstat import cli
     from vllmstat.cli import resolve_instances
     from vllmstat.config import Config
 
+    monkeypatch.setattr(cli, "discover_docker", lambda *a, **k: [])
     cfg = Config.from_sources(["--logs", "docker:vllm-xpu"], {})
     resolve_instances(cfg, {})
     assert len(cfg.instances) == 1
@@ -72,45 +74,94 @@ def test_resolve_instances_cli_logs_do_not_override_per_instance(tmp_path):
     assert cfg.instances[0].logs == "docker:from-config"
 
 
-def test_auto_discover_skipped_when_default_up(monkeypatch):
+def _count_discover(monkeypatch, found):
     from vllmstat import cli
-    from vllmstat.config import Config
 
-    monkeypatch.setattr(cli, "port_responding", lambda url, timeout=0.4: True)
     called = {"n": 0}
-    monkeypatch.setattr(
-        cli,
-        "discover_docker",
-        lambda *a, **k: called.__setitem__("n", called["n"] + 1) or [],
-    )
-    cfg = Config.from_sources([], {})
-    cli.resolve_instances(cfg, {})
-    assert [i.url for i in cfg.instances] == ["http://localhost:8000"]
-    assert called["n"] == 0  # discovery not consulted when default is up
+
+    def fake(*a, **k):
+        called["n"] += 1
+        return list(found)
+
+    monkeypatch.setattr(cli, "discover_docker", fake)
+    return called
 
 
-def test_auto_discover_used_when_default_down(monkeypatch):
+def test_discovery_is_default_and_used(monkeypatch):
     from vllmstat import cli
     from vllmstat.config import Config
     from vllmstat.core.state import Instance
 
-    monkeypatch.setattr(cli, "port_responding", lambda url, timeout=0.4: False)
-    monkeypatch.setattr(
-        cli,
-        "discover_docker",
-        lambda *a, **k: [Instance(name="c", url="http://localhost:9001", locality="local")],
+    called = _count_discover(
+        monkeypatch, [Instance(name="c", url="http://localhost:9001", locality="local")]
     )
     cfg = Config.from_sources([], {})
     cli.resolve_instances(cfg, {})
+    assert called["n"] == 1
     assert [i.url for i in cfg.instances] == ["http://localhost:9001"]
 
 
-def test_auto_discover_falls_back_to_default_when_none(monkeypatch):
+def test_discovery_falls_back_to_default_url_when_none(monkeypatch):
     from vllmstat import cli
     from vllmstat.config import Config
 
-    monkeypatch.setattr(cli, "port_responding", lambda url, timeout=0.4: False)
-    monkeypatch.setattr(cli, "discover_docker", lambda *a, **k: [])
+    called = _count_discover(monkeypatch, [])
     cfg = Config.from_sources([], {})
     cli.resolve_instances(cfg, {})
+    assert called["n"] == 1
     assert [i.url for i in cfg.instances] == ["http://localhost:8000"]
+
+
+def test_discovery_skipped_for_explicit_url_mock_and_opt_out(monkeypatch):
+    from vllmstat import cli
+    from vllmstat.config import Config
+
+    called = _count_discover(monkeypatch, [])
+    for argv in (["--url", "http://a:8000"], ["--mock"], ["--no-discover-docker"]):
+        cli.resolve_instances(Config.from_sources(argv, {}), {})
+    assert called["n"] == 0
+
+
+def test_discovery_skipped_for_config_instances(monkeypatch, tmp_path):
+    from vllmstat import cli
+    from vllmstat.config import Config
+
+    called = _count_discover(monkeypatch, [])
+    p = tmp_path / "vllmstat.toml"
+    p.write_text('[[instance]]\nname = "a"\nurl = "http://localhost:8000"\n')
+    cli.resolve_instances(Config.from_sources(["--config", str(p)], {}), {})
+    assert called["n"] == 0
+
+
+def test_explicit_discover_flag_merges_with_url(monkeypatch):
+    from vllmstat import cli
+    from vllmstat.config import Config
+    from vllmstat.core.state import Instance
+
+    called = _count_discover(
+        monkeypatch, [Instance(name="c", url="http://localhost:9001", locality="local")]
+    )
+    cfg = Config.from_sources(["--discover-docker", "--url", "http://a:8000"], {})
+    cli.resolve_instances(cfg, {})
+    assert called["n"] == 1
+    assert [i.url for i in cfg.instances] == ["http://localhost:9001", "http://a:8000"]
+
+
+def test_once_json_combined_emits_single_snapshot(capsys):
+    from vllmstat.cli import main
+
+    rc = main(
+        [
+            "--once",
+            "--json",
+            "--mock",
+            "--combined",
+            "--url",
+            "http://localhost:8000",
+            "--url",
+            "http://localhost:8001",
+        ]
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert isinstance(out, dict) and "running" in out and "kv" in out

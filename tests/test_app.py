@@ -172,3 +172,51 @@ async def test_shape_and_outcomes_panels_present():
         # both panels are mounted and have a valid display state
         assert app.query_one("#shape").display in (True, False)
         assert app.query_one("#outcomes").display in (True, False)
+
+
+@pytest.mark.asyncio
+async def test_fleet_has_combined_row_and_a_key_opens_it():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    cfg.instances = [Instance("a", "http://localhost:8000"), Instance("b", "http://localhost:8001")]
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert app.fleet.combined is not None
+        assert app.fleet_snapshot is not None and app.fleet_snapshot.combined is not None
+        # row 0 is ALL, then the two instances; cursor is bounded by the view count
+        assert "ALL" in str(app.p_overview.renderable)
+        assert app.selected == 0 and app.combined_selected
+        await pilot.press("down")
+        await pilot.press("down")
+        await pilot.press("down")
+        assert app.selected == 2
+        await pilot.press("a")
+        assert app.in_detail is True and app.selected == 0
+        assert app.snapshot is app.fleet_snapshot.combined[1]
+        assert "instances combined" in str(app.p_header.renderable)
+        await pilot.press("r")  # reset every runtime; must not raise
+        await pilot.press("escape")
+        assert app.in_detail is False
+
+
+@pytest.mark.asyncio
+async def test_combined_flag_starts_in_combined_detail():
+    cfg = Config(mock=True, interval=0.1, gpu=False, combined=True)
+    cfg.instances = [Instance("a", "http://localhost:8000"), Instance("b", "http://localhost:8001")]
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert app.is_fleet and app.in_detail and app.combined_selected
+        assert app.query_one("#detail").display is True
+        assert app.snapshot is not None and app.snapshot.running >= 0
+
+
+@pytest.mark.asyncio
+async def test_single_instance_has_no_combined_view():
+    cfg = Config(mock=True, interval=0.1, gpu=False)
+    app = VllmStatApp(cfg)
+    async with app.run_test() as pilot:
+        await pilot.pause(0.2)
+        assert app.fleet.combined is None
+        await pilot.press("a")  # no-op outside fleet mode
+        assert app.in_detail is True and app.selected == 0

@@ -42,6 +42,16 @@ def test_config_and_discover_flags():
     assert c.config_path == "/tmp/x.toml" and c.discover_docker is True
 
 
+def test_discover_flag_defaults_to_auto_and_can_be_disabled():
+    assert Config.from_sources([], {}).discover_docker is None
+    assert Config.from_sources(["--no-discover-docker"], {}).discover_docker is False
+
+
+def test_combined_flag():
+    assert Config.from_sources([], {}).combined is False
+    assert Config.from_sources(["--combined"], {}).combined is True
+
+
 def test_logs_flag():
     c = Config.from_sources(["--logs", "docker:vllm-xpu"], {})
     assert c.logs == "docker:vllm-xpu"

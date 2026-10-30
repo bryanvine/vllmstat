@@ -217,7 +217,7 @@ def fleet_overview(
     if show_gpu:
         cols += "  GPU"
     lines = [head, cols]
-    for i, (inst, s) in enumerate(fleet.items):
+    for i, (inst, s) in enumerate(fleet.views):
         cur = "▸" if i == selected else " "
         st = "●" if s.connected else "✗"
         rw = f"{s.running:.0f}/{s.waiting:.0f}" if s.connected else "—"
@@ -231,9 +231,17 @@ def fleet_overview(
     return "\n".join(lines)
 
 
-def detail_header(inst: Instance, s: Snapshot, *, interval: float, uptime: str) -> str:
+def detail_header(
+    inst: Instance, s: Snapshot, *, interval: float, uptime: str, n_instances: int = 0
+) -> str:
     state = "● connected" if s.connected else "✗ down"
-    return f"‹ fleet / {inst.name} @ {inst.url}   esc back    {state}  up {uptime}  {interval:.1f}s"
+    if s.connected and s.error:
+        state += f" ({s.error})"  # combined view: lists instances that are down
+    if inst.url:
+        where = f"{inst.name} @ {inst.url}"
+    else:
+        where = f"{inst.name} · {n_instances} instances combined"
+    return f"‹ fleet / {where}   esc back    {state}  up {uptime}  {interval:.1f}s"
 
 
 def efficiency(s: Snapshot) -> str:

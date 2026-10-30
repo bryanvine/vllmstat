@@ -52,6 +52,13 @@ class FleetSnapshot:
     ts: float
     items: list[tuple[Instance, Snapshot]] = field(default_factory=list)
     gpu: GpuSnapshot = field(default_factory=GpuSnapshot)
+    # Synthetic "all instances" entry (see core.fleet.CombinedRuntime); None when disabled.
+    combined: tuple[Instance, Snapshot] | None = None
+
+    @property
+    def views(self) -> list[tuple[Instance, Snapshot]]:
+        """Rows as the UI shows them: the combined entry first, then each instance."""
+        return ([self.combined] if self.combined is not None else []) + self.items
 
 
 @dataclass

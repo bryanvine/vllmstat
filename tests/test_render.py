@@ -460,6 +460,32 @@ def test_detail_header_breadcrumb():
     assert "qwen-30b" in h and "esc back" in h
 
 
+def test_detail_header_combined_lists_down_instances():
+    from vllmstat import render
+    from vllmstat.core.state import Instance, Snapshot
+
+    h = render.detail_header(
+        Instance("ALL", ""),
+        Snapshot(ts=1.0, connected=True, error="down: b"),
+        interval=1.0,
+        uptime="0h01m",
+        n_instances=3,
+    )
+    assert "ALL · 3 instances combined" in h and "(down: b)" in h and "@" not in h
+
+
+def test_fleet_overview_shows_combined_row_first():
+    from vllmstat import render
+    from vllmstat.core.state import Instance, Snapshot
+
+    fs = _fleet_fixture()
+    fs.combined = (Instance("ALL", ""), Snapshot(ts=1.0, connected=True, running=7.0))
+    out = render.fleet_overview(fs, 0, width=80, uptime="0h03m")
+    lines = out.splitlines()
+    assert f"{len(fs.items)} instances" in lines[0]  # header counts real instances only
+    assert lines[2].startswith("▸ALL") and " 7/0" in lines[2]
+
+
 def test_render_tee_http_and_empty():
     from vllmstat import render
     from vllmstat.core.tee import TeeEvent

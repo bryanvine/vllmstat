@@ -40,6 +40,7 @@ class VllmStatApp(App):
         ("up,k", "cursor_up", "Up"),
         ("down,j", "cursor_down", "Down"),
         ("enter", "drill_in", "Open"),
+        ("a", "combined", "All"),
         ("escape", "back", "Back"),
         ("plus,equals_sign", "faster", "Faster"),
         ("minus", "slower", "Slower"),
@@ -62,7 +63,8 @@ class VllmStatApp(App):
             )
         ]
         self.is_fleet = len(instances) > 1
-        self.in_detail = not self.is_fleet
+        # Fleet mode starts on the overview; --combined opens the ALL dashboard directly.
+        self.in_detail = not self.is_fleet or cfg.combined
         self._gpu = GpuProvider(enabled=cfg.gpu)
         self._mock = cfg.mock
         if cfg.mock:
@@ -71,7 +73,7 @@ class VllmStatApp(App):
             ]
         else:
             runtimes = [InstanceRuntime(i) for i in instances]
-        self.fleet = Fleet([], runtimes=runtimes)
+        self.fleet = Fleet([], runtimes=runtimes, combined=self.is_fleet)
         self.fleet_snapshot: FleetSnapshot | None = None
         self.snapshot: Snapshot | None = None
         self._start = time.monotonic()
@@ -208,9 +210,10 @@ class VllmStatApp(App):
         fs = await self.fleet.poll(host_gpu, now)
         self._refresh_energy(host_gpu)
         self.fleet_snapshot = fs
-        if fs.items:
-            idx = min(self.selected, len(fs.items) - 1)
-            self.snapshot = fs.items[idx][1]
+        views = fs.views
+        if views:
+            idx = min(self.selected, len(views) - 1)
+            self.snapshot = views[idx][1]
         self._refresh()
 
     def _refresh_energy(self, host_gpu: GpuSnapshot) -> None:
@@ -252,15 +255,30 @@ class VllmStatApp(App):
 
     def _current(self) -> tuple[Instance, Snapshot, History]:
         assert self.fleet_snapshot is not None
-        idx = min(self.selected, len(self.fleet_snapshot.items) - 1)
-        inst, snap = self.fleet_snapshot.items[idx]
-        hist = self.fleet.runtimes[idx].history
+        idx = min(self.selected, len(self.fleet_snapshot.views) - 1)
+        inst, snap = self.fleet_snapshot.views[idx]
+        hist = self._runtime().history
         return inst, snap, hist
+
+    def _runtime(self) -> InstanceRuntime:
+        """The runtime behind the selected row (the combined one when it is selected)."""
+        views = self.fleet.views
+        return views[min(self.selected, len(views) - 1)]
+
+    @property
+    def combined_selected(self) -> bool:
+        return self.fleet.combined is not None and self.selected == 0
 
     def _refresh_detail(self, inst: Instance, snap: Snapshot, hist: History) -> None:
         if self.is_fleet:
             self.p_header.update(
-                render.detail_header(inst, snap, interval=self.cfg.interval, uptime=self._uptime())
+                render.detail_header(
+                    inst,
+                    snap,
+                    interval=self.cfg.interval,
+                    uptime=self._uptime(),
+                    n_instances=len(self.fleet.runtimes),
+                )
             )
         else:
             self.p_header.update(
@@ -293,14 +311,24 @@ class VllmStatApp(App):
         self.p_advisor.display = bool(advisor)
         self.p_advisor.update(advisor)
         self.p_gpu.update(render.gpu(snap))
-        rt = self.fleet.runtimes[min(self.selected, len(self.fleet.runtimes) - 1)]
-        has_tee = bool(inst.logs) or self._proxy is not None or len(rt.tee) > 0
+        if self.combined_selected:
+            # Merge every instance's feed, newest last, so ALL shows fleet-wide traffic.
+            events = sorted(
+                (e for r in self.fleet.runtimes for e in r.tee.recent(40)), key=lambda e: e.ts
+            )[-40:]
+            sources = [r.instance.logs for r in self.fleet.runtimes if r.instance.logs]
+            has_tee = bool(events) or bool(sources) or self._proxy is not None
+            source = self._proxy_desc or (f"{len(sources)} sources" if sources else "—")
+        else:
+            rt = self._runtime()
+            events = rt.tee.recent(40)
+            has_tee = bool(inst.logs) or self._proxy is not None or len(rt.tee) > 0
+            source = self._proxy_desc or inst.logs or "—"
         self.p_tee.display = has_tee and self.tee_visible
         if self.p_tee.display:
-            source = self._proxy_desc or inst.logs or "—"
             self.p_tee.update(
                 render.tee(
-                    rt.tee.recent(40),
+                    events,
                     width=self._panel_width(self.p_tee),
                     source_desc=source,
                     height=12,
@@ -332,8 +360,11 @@ class VllmStatApp(App):
         self._refresh()
 
     def action_reset_session(self) -> None:
-        idx = min(self.selected, len(self.fleet.runtimes) - 1)
-        self.fleet.runtimes[idx].reset_session()
+        if self.combined_selected:
+            for rt in self.fleet.views:  # ALL resets every instance plus the combined engine
+                rt.reset_session()
+        else:
+            self._runtime().reset_session()
 
     def action_cursor_up(self) -> None:
         if self.is_fleet and not self.in_detail and self.selected > 0:
@@ -341,8 +372,16 @@ class VllmStatApp(App):
             self._refresh()
 
     def action_cursor_down(self) -> None:
-        if self.is_fleet and not self.in_detail and self.selected < len(self.fleet.runtimes) - 1:
+        if self.is_fleet and not self.in_detail and self.selected < len(self.fleet.views) - 1:
             self.selected += 1
+            self._refresh()
+
+    def action_combined(self) -> None:
+        """Jump straight to the combined (ALL) dashboard from anywhere in fleet mode."""
+        if self.is_fleet and self.fleet.combined is not None:
+            self.selected = 0
+            self.in_detail = True
+            self._apply_mode()
             self._refresh()
 
     def action_drill_in(self) -> None:

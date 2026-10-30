@@ -102,6 +102,8 @@ def discover_docker(
     run: Callable[[list[str]], str] | None = None,
     host_gpu_count: int | None = None,
 ) -> list[Instance]:
+    if run is None and not shutil.which("docker"):
+        return []  # no Docker on this host: nothing to discover, nothing to report
     _run = run or _default_run
     try:
         rows = parse_ps(_run(["docker", "ps", "--no-trunc", "--format", "{{json .}}"]))

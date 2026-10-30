@@ -10,22 +10,9 @@ from vllmstat.config import Config
 from vllmstat.core.metrics import MetricsEngine
 from vllmstat.core.parse import parse_metrics
 from vllmstat.providers.discover_docker import discover_docker
+from vllmstat.providers.discover_proc import discover_procs
 from vllmstat.providers.mock import MockProvider
 from vllmstat.snapshot_json import snapshot_to_dict
-
-
-def port_responding(url: str, timeout: float = 0.4) -> bool:
-    import socket
-    from urllib.parse import urlparse
-
-    p = urlparse(url if "://" in url else "http://" + url)
-    host = p.hostname or "localhost"
-    port = p.port or (443 if p.scheme == "https" else 80)
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
 
 
 def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
@@ -67,27 +54,19 @@ def resolve_instances(cfg: Config, env: dict[str, str]) -> Config:
             cfg.energy = parse_energy_config(energy_tbl)
         except ValueError as e:
             print(f"vllmstat: ignoring [energy] config: {e}", file=sys.stderr)
-    docker_instances = discover_docker() if cfg.discover_docker else []
-    default_url = "http://localhost:8000"
-    if (
-        not config_instances
-        and not docker_instances
-        and not cfg.urls
-        and not cfg.mock
-        and not cfg.discover_docker  # explicit discovery already ran above; don't re-probe
-    ):
-        if not port_responding(default_url):
-            found = discover_docker()
-            if found:
-                docker_instances = found
-                print(
-                    f"vllmstat: {default_url} not responding — "
-                    f"found {len(found)} vLLM container(s) via Docker",
-                    file=sys.stderr,
-                )
+    # Discovery (Docker containers + bare `vllm serve` host processes) is on by
+    # default. It is skipped when the user named explicit targets (--url / a config
+    # file with instances), under --mock, or with --no-discover-docker /
+    # --no-discover-proc; an explicit --discover-* flag forces it regardless.
+    auto = not (cfg.mock or cfg.urls or config_instances)
+    want_docker = auto if cfg.discover_docker is None else cfg.discover_docker
+    want_proc = auto if cfg.discover_proc is None else cfg.discover_proc
+    discovered = discover_docker() if want_docker else []
+    if want_proc:
+        discovered += discover_procs(default_metrics_path=cfg.metrics_path)
     cfg.instances = resolve_fleet(
         config_instances,
-        docker_instances,
+        discovered,
         cfg.urls,
         defaults_api_key=cfg.api_key,
         defaults_metrics_path=cfg.metrics_path,
@@ -113,7 +92,7 @@ def _run_once_fleet(cfg: Config) -> int:
             ]
         else:
             rts = [InstanceRuntime(i) for i in cfg.instances]
-        fleet = Fleet([], runtimes=rts)
+        fleet = Fleet([], runtimes=rts, combined=cfg.combined)
         await fleet.poll(GpuSnapshot(), 0.0)
         time.sleep(min(cfg.interval, 1.0))
         fs = await fleet.poll(GpuSnapshot(), 1.0)
@@ -121,6 +100,10 @@ def _run_once_fleet(cfg: Config) -> int:
         return fs
 
     fs = asyncio.run(go())
+    if cfg.combined:
+        assert fs.combined is not None
+        print(json.dumps(snapshot_to_dict(fs.combined[1]), default=str))
+        return 0
     out = [
         {
             "name": inst.name,

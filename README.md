@@ -70,6 +70,7 @@ vllmstat --once --json
 | `t` | Toggle the TEE request-feed panel |
 | `↑` / `↓` (or `k` / `j`) | Fleet overview: move the selection |
 | `Enter` | Fleet overview: open the selected instance's dashboard |
+| `a` | Fleet mode: open the combined **ALL** dashboard (every instance summed) |
 | `Esc` | Drill-in: return to the fleet overview |
 | `+` / `=` | Halve the refresh interval (faster) |
 | `-` | Double the refresh interval (slower) |
@@ -80,7 +81,11 @@ vllmstat --once --json
 |------|---------|-------------|
 | `-u` / `--url` | `http://localhost:8000` | vLLM server base URL. **Repeatable** — pass it more than once for a fleet. |
 | `--config` | — | Path to a TOML config file defining instances (see [Fleet monitoring](#fleet--multi-instance-monitoring)) |
-| `--discover-docker` | — | Auto-discover local vLLM Docker containers and add them to the fleet (also wires each one's log tee) |
+| `--discover-docker` | auto | Docker discovery is on by default; this forces it even alongside `--url` / `--config` (see [Docker auto-discovery](#fleet--multi-instance-monitoring)) |
+| `--no-discover-docker` | — | Never scan the local Docker daemon |
+| `--discover-proc` | auto | Host-process discovery (bare `vllm serve` from a venv / systemd unit) is on by default; this forces it alongside `--url` / `--config` |
+| `--no-discover-proc` | — | Never scan local processes for vLLM servers |
+| `--combined` | — | Fleet mode: open the combined **ALL** dashboard directly; with `--once --json`, emit the combined snapshot as one object |
 | `--logs` | — | Tail a log source into the TEE request-feed panel: `docker:NAME` or a file path |
 | `--proxy` | — | Run a reverse proxy on `[HOST:]PORT` that tees full prompts/responses (needs `vllmstat[proxy]`) |
 | `--metrics-path` | `/metrics` | Prometheus metrics path |
@@ -176,6 +181,8 @@ Each rule matches by weekday range (`mon-fri`, `sat-sun`, `mon-sun`, single days
 
 Point one `vllmstat` at **many** vLLM servers at once — several local Docker containers each pinned to different GPUs, remote servers across your network, or both. You get an nvtop-style **overview** with one line per instance; press <kbd>Enter</kbd> to **drill into** any instance's full dashboard and <kbd>Esc</kbd> to come back.
 
+The first overview row is **ALL**: every instance combined. Open it with <kbd>Enter</kbd> or jump to it from anywhere with <kbd>a</kbd> (or start there with `--combined`). It is the full dashboard computed over the merged metrics of the whole box: running/waiting and token rates are summed, latency percentiles come from the pooled histograms, KV usage is weighted by each instance's capacity, and the GPU panel shows the union of the instances' cards. Per-server settings that don't add up (max-model-len, gpu-memory-utilization, the config advisor) are left out of the combined view; instances that are down are listed in its header. <kbd>r</kbd> on ALL resets the session averages of every instance.
+
 ![vllmstat fleet overview](https://raw.githubusercontent.com/bryanvine/vllmstat/main/docs/fleet.png)
 
 A single `--url` (or no arguments at all) keeps the classic single-instance dashboard unchanged — fleet mode activates only when more than one instance is resolved.
@@ -213,15 +220,15 @@ url     = "http://gpu-box-2:8000"  # remote → serving metrics only
 api_key = "sk-..."
 ```
 
-**3. Docker auto-discovery** — scan the local Docker daemon for vLLM containers and add them automatically, including each one's published port and `--gpus` / `NVIDIA_VISIBLE_DEVICES` pinning:
+**3. Docker auto-discovery (the default)**: with no arguments, `vllmstat` scans the local Docker daemon for vLLM containers and monitors all of them, including each one's published port, `--gpus` / `NVIDIA_VISIBLE_DEVICES` pinning, and log tee:
 
 ```bash
-vllmstat --discover-docker
+vllmstat                        # discover every local vLLM container
+vllmstat --no-discover-docker   # skip the scan; just localhost:8000
+vllmstat --discover-docker --url http://gpu-box-2:8000   # containers plus an explicit remote
 ```
 
-It looks for containers whose image or command mentions `vllm`. If Docker isn't installed or reachable, discovery is silently skipped — it never crashes the dashboard.
-
-**Zero-config auto-discovery:** if you just run `vllmstat` with no arguments and nothing is listening on the default `localhost:8000`, it automatically falls back to Docker discovery and monitors whatever vLLM containers it finds (so a containerised vLLM on some other port just works). Pass any explicit `--url`/`--config`/`--discover-docker` and this fallback is skipped.
+It looks for containers whose image or command mentions `vllm`. It also scans `/proc` for vLLM servers running directly on the host (`vllm serve …` or `python -m vllm.entrypoints.openai.api_server …` — from a venv, tmux, or a systemd unit, even as another user) and reads each one's `--host` / `--port` / `--served-model-name` from its command line, so a server bound to a specific address such as a Tailscale IP is found too; skip that with `--no-discover-proc`. If nothing is found (or Docker isn't installed), it falls back to the classic single-instance dashboard on `localhost:8000`. Discovery is skipped automatically when you name explicit targets with `--url` or a config file with instances, unless you also pass `--discover-docker`.
 
 ### Local vs. remote
 
